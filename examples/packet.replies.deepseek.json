@@ -1,0 +1,66 @@
+[
+  {
+    "response": "Heva specializes in Afro hair, so your 4C curls are right in their wheelhouse.\n\nThey have two packages: Silver at $3,000 USD with a $500 deposit, and Gold at $4,500 USD with a $600 deposit.\n\nAnd yes, you can pay straight from your assessment — each package has a Book button that opens the Doctours deposit checkout. The link below takes you there.\nhttps://www.doctours.com/assessment/c3d4e5f6-3333-4333-8333-333333333333",
+    "escalate": false,
+    "escalationReason": null,
+    "templateId": null,
+    "intent": "answer package list and payment path for Heva",
+    "shouldFollowUp": false,
+    "followUpTiming": null,
+    "attachmentUrls": null,
+    "highEngagement": true,
+    "workingMemoryUpdates": null
+  },
+  {
+    "response": "Dr. Hakan Clinic has one package, Sapphire, at $3,200 USD, and the deposit to book it is $500.",
+    "escalate": false,
+    "escalationReason": null,
+    "templateId": null,
+    "intent": "answer clinic pricing",
+    "shouldFollowUp": false,
+    "followUpTiming": null,
+    "attachmentUrls": null,
+    "highEngagement": true,
+    "workingMemoryUpdates": null
+  },
+  {
+    "response": "Yes, the consultation is free — it's a phone call with our team, not the clinic. Nothing is on the calendar yet, so you can pick a time using the link below.\nhttps://www.doctours.com/consultation",
+    "escalate": false,
+    "escalationReason": null,
+    "templateId": null,
+    "intent": "answer consultation cost and format",
+    "shouldFollowUp": false,
+    "followUpTiming": null,
+    "attachmentUrls": null,
+    "highEngagement": false,
+    "workingMemoryUpdates": null
+  },
+  {
+    "response": "I'm bringing in a person from our team to help you.",
+    "escalate": true,
+    "escalationReason": "Patient asked for a human",
+    "templateId": null,
+    "intent": "escalate to human",
+    "shouldFollowUp": false,
+    "followUpTiming": null,
+    "attachmentUrls": null,
+    "highEngagement": false,
+    "workingMemoryUpdates": {
+      "escalationFlags": "Patient asked for a human"
+    }
+  },
+  {
+    "response": "I can't take card payments here, so I'm bringing in a person from our team.",
+    "escalate": true,
+    "escalationReason": "Asked us to charge a card",
+    "templateId": null,
+    "intent": "escalate to human",
+    "shouldFollowUp": false,
+    "followUpTiming": null,
+    "attachmentUrls": null,
+    "highEngagement": false,
+    "workingMemoryUpdates": {
+      "escalationFlags": "Asked us to charge a card"
+    }
+  }
+]

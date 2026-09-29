@@ -1,0 +1,26 @@
+{
+  "name": "doctours-reply",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Skill-based, escalation-aware SMS reply system for the Doctours pre-deposit take-home.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "reply": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "eval": "tsx eval/run.ts"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
