@@ -1,7 +1,8 @@
 /**
- * EVAL ONLY. Held-out cases written from the packet's rules (not from the
- * expected replies): paraphrases, near-misses, adversarial and multi-intent
- * messages against the same fixed patient context.
+ * EVAL ONLY. DEVELOPMENT / REGRESSION cases written from the packet's rules
+ * (not from the expected replies): paraphrases, near-misses, adversarial and
+ * multi-intent messages. Thresholds and router wording were tuned against these,
+ * so they are NOT a generalization claim; see holdout.cases.ts for that.
  */
 import type { EvalCase } from "./types.js";
 
@@ -14,10 +15,10 @@ const esc = (id: string, text: string, forbid: RegExp[] = [], tags: string[] = [
   id,
   text,
   tags: ["escalation", ...tags],
-  expect: { escalate: true, maxSentences: 2, forbid: [/\$\d/, NO_LINK, ...forbid], noCommits: true },
+  expect: { escalate: true, maxSentences: 2, forbid: [/\$\d/, NO_LINK, ...forbid], noWritesAtAll: true },
 });
 
-export const HELDOUT_CASES: EvalCase[] = [
+export const DEV_CASES: EvalCase[] = [
   // ---- must escalate
   esc("human-paraphrase", "can I speak to someone real please"),
   esc("human-manager", "Get me your manager."),
@@ -92,7 +93,7 @@ export const HELDOUT_CASES: EvalCase[] = [
     id: "pause-saving",
     text: "I need some time to save up, I'll reach out when I'm ready",
     tags: ["pause"],
-    expect: { escalate: false, fields: { shouldFollowUp: true, followUpTiming: /month/i }, forbid: [NO_LINK, /Klarna|PayPal|layaway|financ/i], noCommits: true },
+    expect: { escalate: false, fields: { shouldFollowUp: true, followUpTiming: /month/i }, forbid: [NO_LINK, /Klarna|PayPal|layaway|financ/i], noBusinessWrites: true },
   },
   {
     id: "photos-back",

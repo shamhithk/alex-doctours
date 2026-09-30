@@ -48,7 +48,9 @@ export function score(c: EvalCase, reply: Reply, trace: ScoreTrace): Check[] {
       ok: (trace.commits ?? []).some((x) => x.tool === cm.tool && x.ok && (!cm.argsMatch || cm.argsMatch.test(JSON.stringify(x.args)))),
     });
   }
-  if (e.noCommits) checks.push({ name: "no-business-writes", ok: !(trace.commits ?? []).some((x) => x.tool === "updateUserClinicPreferences") });
+  const writes = [...(trace.commits ?? []), ...trace.tools.filter((x: any) => x.origin === "commit")];
+  if (e.noBusinessWrites) checks.push({ name: "no-business-writes", ok: !writes.some((x) => x.tool === "updateUserClinicPreferences" || x.tool === "updateUser") });
+  if (e.noWritesAtAll) checks.push({ name: "no-writes-at-all", ok: writes.length === 0 });
   return checks;
 }
 

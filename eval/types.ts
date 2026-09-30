@@ -16,7 +16,9 @@ export interface EvalCase {
     tools?: { tool: string; argsMatch?: RegExp }[];
     /** Writes that must be committed. */
     commits?: { tool: string; argsMatch?: RegExp }[];
-    /** Writes that must NOT be committed. */
-    noCommits?: boolean;
+    /** No selection (business) writes may be committed; a working-memory note is allowed. */
+    noBusinessWrites?: boolean;
+    /** No writes of any kind (escalations). */
+    noWritesAtAll?: boolean;
   };
 }
