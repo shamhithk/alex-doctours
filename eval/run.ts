@@ -2,7 +2,7 @@
  * Live evaluation. Scores every requirement per case, repeats k times (pass^k),
  * and writes a JSON report to eval/results/.
  *
- *   npx tsx eval/run.ts --writer deepseek --router auto --k 1 [--set packet|dev|regression-v1|holdout-v2|all] [--tag escalation]
+ *   npx tsx eval/run.ts --writer deepseek --router auto --k 1 [--set packet|dev|regression-v1|regression-v2|holdout-v3|all] [--tag escalation]
  *                       [--concurrency 2] [--max-usd 1.00] [--summary-out file.json]
  *
  * Spend safety: a case starts only if (spent + reserve) stays under --max-usd, where the reserve
@@ -21,7 +21,8 @@ import { mapLimit } from "../src/util.js";
 import { PACKET_CASES } from "./packet.cases.js";
 import { DEV_CASES } from "./dev.cases.js";
 import { HOLDOUT_CASES as REGRESSION_V1_CASES } from "./holdout-v1.cases.js";
-import { HOLDOUT_V2_CASES } from "./holdout-v2.cases.js";
+import { HOLDOUT_V2_CASES as REGRESSION_V2_CASES } from "./holdout-v2.cases.js";
+import { HOLDOUT_V3_CASES } from "./holdout-v3.cases.js";
 import type { EvalCase } from "./types.js";
 import { score } from "./lib.js";
 import { otelFromEnv } from "../src/observability/otel.js";
@@ -46,12 +47,13 @@ const deps = buildDeps(opts);
 if (arg("failover", "1") === "0") deps.writerFallback = undefined;
 const qs = buildQuestions(deps.domain, deps.ctx);
 
-// holdout-v1 was exposed by the second review, so it is regression data now; holdout-v2 is the frozen set.
+// Sets that informed a fix are regression data: holdout-v1 (second review), holdout-v2 (its failure analysis). holdout-v3 is frozen.
 const SETS: Record<string, EvalCase[]> = {
   packet: PACKET_CASES,
   dev: DEV_CASES,
   "regression-v1": REGRESSION_V1_CASES,
-  "holdout-v2": HOLDOUT_V2_CASES,
+  "regression-v2": REGRESSION_V2_CASES,
+  "holdout-v3": HOLDOUT_V3_CASES,
   all: [...PACKET_CASES, ...DEV_CASES],
 };
 if (!SETS[set ?? "all"]) throw new Error(`unknown --set ${set}; use ${Object.keys(SETS).join(" | ")}`);

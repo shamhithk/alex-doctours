@@ -4,7 +4,7 @@
  * Reply contract appended. Scored with the same cases and scorer as the
  * workflow, on the same writer model.
  *
- *   npx tsx eval/baseline.ts --writer deepseek [--set all|packet|dev|regression-v1|holdout-v2] [--concurrency 2] [--max-usd 0.5]
+ *   npx tsx eval/baseline.ts --writer deepseek [--set all|packet|dev|regression-v1|regression-v2|holdout-v3] [--concurrency 2] [--max-usd 0.5]
  */
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -20,7 +20,8 @@ import { mapLimit } from "../src/util.js";
 import { PACKET_CASES } from "./packet.cases.js";
 import { DEV_CASES } from "./dev.cases.js";
 import { HOLDOUT_CASES as REGRESSION_V1_CASES } from "./holdout-v1.cases.js";
-import { HOLDOUT_V2_CASES } from "./holdout-v2.cases.js";
+import { HOLDOUT_V2_CASES as REGRESSION_V2_CASES } from "./holdout-v2.cases.js";
+import { HOLDOUT_V3_CASES } from "./holdout-v3.cases.js";
 import { score } from "./lib.js";
 
 loadEnv();
@@ -30,7 +31,8 @@ const arg = (k: string, d?: string) => {
 };
 const writer = arg("writer", "deepseek")!;
 const set = arg("set", "all");
-const SETS: Record<string, typeof PACKET_CASES> = { packet: PACKET_CASES, dev: DEV_CASES, "regression-v1": REGRESSION_V1_CASES, "holdout-v2": HOLDOUT_V2_CASES, all: [...PACKET_CASES, ...DEV_CASES] };
+const SETS: Record<string, typeof PACKET_CASES> = { packet: PACKET_CASES, dev: DEV_CASES, "regression-v1": REGRESSION_V1_CASES, "regression-v2": REGRESSION_V2_CASES,
+  "holdout-v3": HOLDOUT_V3_CASES, all: [...PACKET_CASES, ...DEV_CASES] };
 if (!SETS[set ?? "all"]) throw new Error(`unknown --set ${set}`);
 const cases = SETS[set ?? "all"];
 const client = createClient(getModel(writer));
