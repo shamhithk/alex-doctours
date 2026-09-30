@@ -18,21 +18,21 @@ const supersededReason = (d: string) => Object.entries(superseded).find(([prefix
 const usd = (n: number | undefined | null) => (n === undefined || n === null ? "–" : `$${n.toFixed(5)}`);
 const ms = (n: number | undefined) => (n === undefined ? "–" : `${(n / 1000).toFixed(1)} s`);
 /**
- * Reader-facing set names. "Blind test set" = cases we wrote independently of the code (not the
+ * Reader-facing set names. "Blind test set" = cases I created independently of the code (not the
  * reviewer's hidden suite). Retired blind sets are regression data; older runs keep the name they had.
  */
 const SET_LABELS: Record<string, string> = {
-  all: "packet (5) + our dev cases (39)",
+  all: "packet (5) + dev cases I created (39)",
   packet: "packet (5)",
-  dev: "our dev cases (39)",
-  "holdout-v4": "**our blind test set v4**",
-  "regression-v3": "our blind set v3 (retired → regression)",
-  "holdout-v3": "our blind set v3 (current at the time)",
-  "regression-v2": "our blind set v2 (retired → regression)",
-  "regression-v1": "our blind set v1 (retired → regression)",
-  "holdout-v2": "our blind set v2 (current at the time)",
-  holdout: "our blind set v1 (current at the time)",
-};
+  dev: "dev cases I created (39)",
+  "holdout-v4": "**blind test set v4 (I created)**",
+  "regression-v3": "blind set v3 I created (retired → regression)",
+  "regression-v2": "blind set v2 I created (retired → regression)",
+  "regression-v1": "blind set v1 I created (retired → regression)",
+  "holdout-v3": "blind set v3 I created (current at the time)",
+  "holdout-v2": "blind set v2 I created (current at the time)",
+  holdout: "blind set v1 I created (current at the time)",
+}
 const setLabel = (set: string) => SET_LABELS[set] ?? set;
 
 const runs = dirs.map((d) => ({ d, c: read(d, "config.json"), s: read(d, "summary.json") }));

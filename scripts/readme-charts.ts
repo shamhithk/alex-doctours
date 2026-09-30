@@ -76,7 +76,7 @@ mkdirSync("docs/img", { recursive: true });
 // ---------- 1. scorecard ----------
 {
   const tiles = [
-    { label: "Pass rate, blind test set", now: ds.s.passRate, was: baseline.s.passRate, note: `${ds.s.cases} cases · DeepSeek · k=${ds.c.k}` },
+    { label: "Pass rate, my blind test set", now: ds.s.passRate, was: baseline.s.passRate, note: `${ds.s.cases} cases · DeepSeek · k=${ds.c.k}` },
     { label: "Handoffs caught (recall)", now: ds.s.escalationRecall, was: baseline.s.escalationRecall, note: "messages that need a person" },
     { label: "Prompt per message", now: `${(promptP50 / 1000).toFixed(1)}k`, was: `${(monolithTokens / 1000).toFixed(1)}k`, note: "tokens, median" },
     { label: "Cost per message", now: usd(ds.s.costPerInputUsd), was: usd(monolithCostPerMsg), note: "all stages included" },
@@ -148,7 +148,7 @@ mkdirSync("docs/img", { recursive: true });
   const H = 40 + metrics.length * (systems.length * (barH + 4) + groupGap) + 30;
   const scale = (W - left - right) / 100;
   let y = 36;
-  const parts: string[] = [text(0, 18, `Blind test set: ${ds.s.cases} messages written independently of the code (k=${ds.c.k} runs each for this system)`, 12, "t m")];
+  const parts: string[] = [text(0, 18, `Blind test set I created: ${ds.s.cases} messages written independently of the code (k=${ds.c.k} runs each for this system)`, 12, "t m")];
   for (const g of [0, 25, 50, 75, 100]) parts.push(`<line x1="${left + g * scale}" x2="${left + g * scale}" y1="28" y2="${H - 28}" class="grid" stroke-dasharray="2 3"/>`, text(left + g * scale, H - 12, `${g}%`, 11, "t m", 'text-anchor="middle"'));
   for (const m of metrics) {
     parts.push(text(0, y + 12, m.label, 14, "t", 'font-weight="600"'));

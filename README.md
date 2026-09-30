@@ -6,19 +6,71 @@ This replaces the single ~41k-token system prompt with a **bounded workflow**. M
 
 <img src="docs/img/scorecard.svg" alt="Scorecard: pass rate, handoff recall, prompt size and cost per message, compared with the original prompt" width="100%">
 
+## How to replicate
+
+**1. Clone and set up** (Node 22+; keys and where to get them are in [What you need](#what-you-need)):
+
 ```bash
+git clone https://github.com/shamhithk/alex-doctours.git
+cd alex-doctours
 npm install
-cp .env.example .env        # add keys (see Setup)
-npm run reply -- --input messages.json --output replies.json
+cp .env.example .env    # then add DEEPSEEK_API_KEY (required) and TYPESAFE_API_KEY (recommended)
 ```
 
-`messages.json` is a JSON array of `{ "id", "text" }`. `replies.json` is a JSON array of `Reply` objects, one per input, in the same order.
+**2. Check it works (offline, no keys, no cost):**
+
+```bash
+npm test               # 200+ unit tests with scripted fake models
+npm run typecheck
+```
+
+**3. Reply to messages:** the CLI reads a JSON array of `{ "id", "text" }` and writes a JSON array of `Reply` objects in the same order.
+
+```bash
+npm run reply -- --input eval/packet.messages.json --output replies.json --trace traces/packet.jsonl
+```
+
+**4. Run it on your own test set.** Either way, every reply is traced.
+
+- *Just messages:* put your messages in the same `[{ "id", "text" }]` format and run:
+
+  ```bash
+  npm run reply -- --input your-messages.json --output your-replies.json --trace traces/yours.jsonl
+  ```
+
+- *Scored test cases:* write cases like [`eval/example.cases.json`](eval/example.cases.json), where patterns are case-insensitive strings. Or use a `.ts` file exporting an `EvalCase[]` (see [`eval/types.ts`](eval/types.ts)). Then run:
+
+  ```bash
+  npx tsx eval/run.ts --cases your-cases.json --k 1 --max-usd 0.50
+  ```
+
+  This prints pass rate, handoff recall and precision, cost and every failure. It writes a report and traces to `eval/results/`, and `--k 3` repeats each case 3 times.
+
+**5. Look at the traces:**
+
+```bash
+npm run dashboard                      # offline HTML dashboard: runs, traces, pass/fail grid
+docker compose up -d phoenix           # optional: Arize Phoenix at http://localhost:6006
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006 npm run reply -- --input eval/packet.messages.json --output replies.json
+```
+
+**6. Reproduce the benchmarks** (paid API calls, each run capped by `--max-usd`):
+
+```bash
+npx tsx eval/run.ts --writer deepseek --set holdout-v4 --k 3 --max-usd 0.50    # my blind test set v4
+npx tsx eval/run.ts --writer gemini --set holdout-v4 --k 3 --max-usd 1.00      # needs GEMINI_API_KEY
+npx tsx eval/baseline.ts --writer deepseek --set holdout-v4 --max-usd 0.30     # the original 41k-token prompt, same scorer
+npx tsx scripts/bench-plan.ts --budget 2.50 --headroom 0.30                    # every benchmark in this README, under one budget
+npm run bench:table -- --write && npx tsx scripts/readme-charts.ts --write     # regenerate the README tables and charts
+```
+
+Set names: `packet`, `dev`, `all` (packet + dev), `holdout-v4` (current blind set), and `regression-v1` to `regression-v3` (retired blind sets).
 
 > [!NOTE]
-> **About the test sets in this repo.** Your hidden grading suite is not here. Every number below comes from our own cases:
+> **About the test sets in this repo.** Your hidden grading suite is not here. Every number below comes from the packet's examples and test sets I created:
 > - **the packet's 5 example messages**;
-> - **our 39 development cases**, used to build and tune the system;
-> - **our blind test sets**, written by a separate agent that read only the packet (never the code). Each was frozen by checksum before its first run and retired once it had informed a fix.
+> - **39 development cases I created**, used to build and tune the system;
+> - **blind test sets I created** with a separate agent that read only the packet (never the code). Each was frozen by checksum before its first run and retired once it had informed a fix.
 >
 > The current blind set is **v4**. v1–v3 are now regression checks.
 
@@ -91,11 +143,11 @@ A message such as "charge my visa for the deposit" ends at the gate. The patient
 <img src="docs/img/results.svg" alt="Pass rate and handoff accuracy on the blind test set: original prompt versus this system with DeepSeek and Gemini" width="100%">
 
 <!-- results-notes:start -->
-**On blind test set v4** (48 messages, measured at commit `3589627`):
+**On my blind test set v4** (48 messages, measured at commit `3589627`):
 - **Pass rate:** this system passes 93.1% of runs with DeepSeek and 91.0% with Gemini. The original prompt passes 33.3%.
 - **Handoffs:** every message that needed a person got one, compared with 53.3% for the original prompt. The original prompt also produced 17 replies that weren't valid `Reply` objects.
 - **Speed and cost:** DeepSeek, the default, costs about $0.001 per message with a median of 3.0 s. The original prompt took a median of 12.9 s.
-- **Earlier fixes held:** the packet examples and our dev cases pass 100% (44/44 on all 3 runs), and the retired v3 set scores 98.6%.
+- **Earlier fixes held:** the packet examples and the dev cases I created pass 100% (44/44 on all 3 runs), and the retired v3 set scores 98.6%.
 
 **What still fails, reported and not tuned on:**
 - **An unneeded "which clinic?"** (`h4-ans-balance-due-who`, "when's the rest of the money due … do I pay that to the clinic?"). The answer is the same for every clinic, but the router scored clinic-related skills high enough to trigger the clarifying question.
@@ -115,14 +167,14 @@ Generated by `npm run bench:table -- --write` from the committed artifacts in [`
 
 | Run | Set | Writer | Router | Runs | Pass | pass^k | Esc. recall / precision | Latency p50 / p95 | Cost per input | Cost per successful answer | Cost complete |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `2026-09-30-3589627-deepseek-auto-all-k3` | packet (5) + our dev cases (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.4 s / 7.5 s | $0.00080 | $0.00117 | yes (Jev estimated) |
-| `2026-09-30-3589627-deepseek-auto-holdout-v4-k3` | **our blind test set v4** | deepseek-flash | jev (+llm:deepseek) | 144 | 93.1% | 44/48 | 100.0% / 93.8% | 3.0 s / 8.1 s | $0.00101 | $0.00163 | yes (Jev estimated) |
-| `2026-09-30-3589627-deepseek-auto-regression-v1-k1` | our blind set v1 (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 42 | 95.2% | 40/42 | 100.0% / 92.3% | 2.4 s / 6.1 s | $0.00083 | $0.00124 | yes (Jev estimated) |
-| `2026-09-30-3589627-deepseek-auto-regression-v2-k1` | our blind set v2 (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 43 | 97.7% | 42/43 | 100.0% / 100.0% | 2.2 s / 6.1 s | $0.00075 | $0.00115 | yes (Jev estimated) |
-| `2026-09-30-3589627-deepseek-auto-regression-v3-k3` | our blind set v3 (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 144 | 98.6% | 47/48 | 100.0% / 100.0% | 2.6 s / 7.1 s | $0.00092 | $0.00136 | yes (Jev estimated) |
-| `2026-09-30-3589627-deepseek-jev-only-holdout-v4-k1` | **our blind test set v4** | deepseek-flash | jev | 48 | 87.5% | 42/48 | 100.0% / 78.9% | 2.7 s / 7.8 s | $0.00069 | $0.00123 | yes (Jev estimated) |
-| `2026-09-30-3589627-deepseek-llm-only-holdout-v4-k1` | **our blind test set v4** | deepseek-flash | llm:deepseek | 48 | 95.8% | 46/48 | 100.0% / 100.0% | 4.9 s / 10.2 s | $0.00139 | $0.00215 | yes (Jev estimated) |
-| `2026-09-30-3589627-gemini-auto-holdout-v4-k3` | **our blind test set v4** | gemini-3.8-flash | jev (+llm:deepseek) | 144 | 91.0% | 43/48 | 100.0% / 93.8% | 2.2 s / 4.5 s | $0.00410 | $0.00686 | yes (Jev estimated) |
+| `2026-09-30-3589627-deepseek-auto-all-k3` | packet (5) + dev cases I created (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.4 s / 7.5 s | $0.00080 | $0.00117 | yes (Jev estimated) |
+| `2026-09-30-3589627-deepseek-auto-holdout-v4-k3` | **blind test set v4 (I created)** | deepseek-flash | jev (+llm:deepseek) | 144 | 93.1% | 44/48 | 100.0% / 93.8% | 3.0 s / 8.1 s | $0.00101 | $0.00163 | yes (Jev estimated) |
+| `2026-09-30-3589627-deepseek-auto-regression-v1-k1` | blind set v1 I created (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 42 | 95.2% | 40/42 | 100.0% / 92.3% | 2.4 s / 6.1 s | $0.00083 | $0.00124 | yes (Jev estimated) |
+| `2026-09-30-3589627-deepseek-auto-regression-v2-k1` | blind set v2 I created (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 43 | 97.7% | 42/43 | 100.0% / 100.0% | 2.2 s / 6.1 s | $0.00075 | $0.00115 | yes (Jev estimated) |
+| `2026-09-30-3589627-deepseek-auto-regression-v3-k3` | blind set v3 I created (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 144 | 98.6% | 47/48 | 100.0% / 100.0% | 2.6 s / 7.1 s | $0.00092 | $0.00136 | yes (Jev estimated) |
+| `2026-09-30-3589627-deepseek-jev-only-holdout-v4-k1` | **blind test set v4 (I created)** | deepseek-flash | jev | 48 | 87.5% | 42/48 | 100.0% / 78.9% | 2.7 s / 7.8 s | $0.00069 | $0.00123 | yes (Jev estimated) |
+| `2026-09-30-3589627-deepseek-llm-only-holdout-v4-k1` | **blind test set v4 (I created)** | deepseek-flash | llm:deepseek | 48 | 95.8% | 46/48 | 100.0% / 100.0% | 4.9 s / 10.2 s | $0.00139 | $0.00215 | yes (Jev estimated) |
+| `2026-09-30-3589627-gemini-auto-holdout-v4-k3` | **blind test set v4 (I created)** | gemini-3.8-flash | jev (+llm:deepseek) | 144 | 91.0% | 43/48 | 100.0% / 93.8% | 2.2 s / 4.5 s | $0.00410 | $0.00686 | yes (Jev estimated) |
 
 **Reliability** (rates over answered runs; guards fired counts hard violations across draft and repair attempts):
 
@@ -154,51 +206,51 @@ Generated by `npm run bench:table -- --write` from the committed artifacts in [`
 
 | Run | Set | Writer | Cases | Pass | Esc. recall / precision | Invalid replies | Input tokens p50 | Latency p50 | Total cost |
 |---|---|---|---|---|---|---|---|---|---|
-| `2026-09-30-1dd5717-baseline-deepseek-holdout-v3` | our blind set v3 (current at the time) | deepseek-flash | 48 | 43.8% | 60.0% / 100.0% | 16 | 159291 | 9.8 s | $0.1325 |
-| `2026-09-30-324eedb-baseline-deepseek-holdout-v2` | our blind set v2 (current at the time) | deepseek-flash | 43 | 51.2% | 57.1% / 100.0% | 8 | 119364 | 7.7 s | $0.1068 |
-| `2026-09-30-3589627-baseline-deepseek-holdout-v4` | **our blind test set v4** | deepseek-flash | 48 | 33.3% | 53.3% / 100.0% | 17 | 159667 | 12.9 s | $0.1457 |
+| `2026-09-30-1dd5717-baseline-deepseek-holdout-v3` | blind set v3 I created (current at the time) | deepseek-flash | 48 | 43.8% | 60.0% / 100.0% | 16 | 159291 | 9.8 s | $0.1325 |
+| `2026-09-30-324eedb-baseline-deepseek-holdout-v2` | blind set v2 I created (current at the time) | deepseek-flash | 43 | 51.2% | 57.1% / 100.0% | 8 | 119364 | 7.7 s | $0.1068 |
+| `2026-09-30-3589627-baseline-deepseek-holdout-v4` | **blind test set v4 (I created)** | deepseek-flash | 48 | 33.3% | 53.3% / 100.0% | 17 | 159667 | 12.9 s | $0.1457 |
 
 **Superseded runs** (measured on f8e965a plus uncommitted changes, before the second review's fixes; the holdout set used then is regression data now):
 
 | Run | Set | Writer | Router | Runs | Pass | pass^k | Esc. recall / precision | Latency p50 / p95 | Cost per input | Cost per successful answer | Cost complete |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `2026-09-30-f8e965a-dirty-deepseek-auto-all-k3` | packet (5) + our dev cases (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.2 s / 6.1 s | $0.00085 | $0.00125 | yes (Jev estimated) |
-| `2026-09-30-f8e965a-dirty-deepseek-auto-holdout-k3` | our blind set v1 (current at the time) | deepseek-flash | jev (+llm:deepseek) | 126 | 99.2% | 41/42 | 100.0% / 97.3% | 2.5 s / 4.2 s | $0.00090 | $0.00128 | yes (Jev estimated) |
-| `2026-09-30-f8e965a-dirty-deepseek-jev-only-holdout-k1` | our blind set v1 (current at the time) | deepseek-flash | jev | 42 | 97.6% | 41/42 | 100.0% / 92.3% | 2.4 s / 4.1 s | $0.00059 | $0.00086 | yes (Jev estimated) |
-| `2026-09-30-f8e965a-dirty-deepseek-llm-only-holdout-k1` | our blind set v1 (current at the time) | deepseek-flash | llm:deepseek | 42 | 97.6% | 41/42 | 100.0% / 100.0% | 4.1 s / 6.5 s | $0.00123 | $0.00178 | yes (Jev estimated) |
-| `2026-09-30-f8e965a-dirty-gemini-auto-all-k3` | packet (5) + our dev cases (39) | gemini-3.8-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.0 s / 3.4 s | $0.00401 | $0.00589 | yes (Jev estimated) |
-| `2026-09-30-f8e965a-dirty-gemini-auto-holdout-k3` | our blind set v1 (current at the time) | gemini-3.8-flash | jev (+llm:deepseek) | 126 | 98.4% | 41/42 | 100.0% / 94.7% | 2.0 s / 3.1 s | $0.00454 | $0.00651 | yes (Jev estimated) |
+| `2026-09-30-f8e965a-dirty-deepseek-auto-all-k3` | packet (5) + dev cases I created (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.2 s / 6.1 s | $0.00085 | $0.00125 | yes (Jev estimated) |
+| `2026-09-30-f8e965a-dirty-deepseek-auto-holdout-k3` | blind set v1 I created (current at the time) | deepseek-flash | jev (+llm:deepseek) | 126 | 99.2% | 41/42 | 100.0% / 97.3% | 2.5 s / 4.2 s | $0.00090 | $0.00128 | yes (Jev estimated) |
+| `2026-09-30-f8e965a-dirty-deepseek-jev-only-holdout-k1` | blind set v1 I created (current at the time) | deepseek-flash | jev | 42 | 97.6% | 41/42 | 100.0% / 92.3% | 2.4 s / 4.1 s | $0.00059 | $0.00086 | yes (Jev estimated) |
+| `2026-09-30-f8e965a-dirty-deepseek-llm-only-holdout-k1` | blind set v1 I created (current at the time) | deepseek-flash | llm:deepseek | 42 | 97.6% | 41/42 | 100.0% / 100.0% | 4.1 s / 6.5 s | $0.00123 | $0.00178 | yes (Jev estimated) |
+| `2026-09-30-f8e965a-dirty-gemini-auto-all-k3` | packet (5) + dev cases I created (39) | gemini-3.8-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.0 s / 3.4 s | $0.00401 | $0.00589 | yes (Jev estimated) |
+| `2026-09-30-f8e965a-dirty-gemini-auto-holdout-k3` | blind set v1 I created (current at the time) | gemini-3.8-flash | jev (+llm:deepseek) | 126 | 98.4% | 41/42 | 100.0% / 94.7% | 2.0 s / 3.1 s | $0.00454 | $0.00651 | yes (Jev estimated) |
 
 **Superseded runs** (measured on 324eedb, before the fixes informed by holdout-v2; holdout-v2 is regression data now):
 
 | Run | Set | Writer | Router | Runs | Pass | pass^k | Esc. recall / precision | Latency p50 / p95 | Cost per input | Cost per successful answer | Cost complete |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `2026-09-30-324eedb-deepseek-auto-all-k3` | packet (5) + our dev cases (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.4 s / 7.7 s | $0.00090 | $0.00131 | yes (Jev estimated) |
-| `2026-09-30-324eedb-deepseek-auto-holdout-v2-k3` | our blind set v2 (current at the time) | deepseek-flash | jev (+llm:deepseek) | 129 | 79.8% | 32/43 | 100.0% / 93.3% | 2.5 s / 8.2 s | $0.00107 | $0.00226 | yes (Jev estimated) |
-| `2026-09-30-324eedb-deepseek-auto-regression-v1-k3` | our blind set v1 (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 126 | 97.6% | 39/42 | 100.0% / 97.3% | 2.6 s / 6.1 s | $0.00098 | $0.00142 | yes (Jev estimated) |
-| `2026-09-30-324eedb-deepseek-jev-only-holdout-v2-k1` | our blind set v2 (current at the time) | deepseek-flash | jev | 43 | 81.4% | 35/43 | 100.0% / 93.3% | 2.1 s / 7.0 s | $0.00070 | $0.00144 | yes (Jev estimated) |
-| `2026-09-30-324eedb-deepseek-llm-only-holdout-v2-k1` | our blind set v2 (current at the time) | deepseek-flash | llm:deepseek | 43 | 86.0% | 37/43 | 100.0% / 93.3% | 4.4 s / 8.8 s | $0.00128 | $0.00240 | yes (Jev estimated) |
-| `2026-09-30-324eedb-gemini-auto-all-k1` | packet (5) + our dev cases (39) | gemini-3.8-flash | jev (+llm:deepseek) | 44 | 100.0% | 44/44 | 100.0% / 100.0% | 2.0 s / 3.6 s | $0.00503 | $0.00738 | yes (Jev estimated) |
-| `2026-09-30-324eedb-gemini-auto-holdout-v2-k3` | our blind set v2 (current at the time) | gemini-3.8-flash | jev (+llm:deepseek) | 129 | 86.0% | 37/43 | 100.0% / 93.3% | 1.9 s / 4.2 s | $0.00424 | $0.00792 | yes (Jev estimated) |
-| `2026-09-30-324eedb-gemini-auto-regression-v1-k1` | our blind set v1 (retired → regression) | gemini-3.8-flash | jev (+llm:deepseek) | 42 | 95.2% | 40/42 | 100.0% / 92.3% | 2.1 s / 3.7 s | $0.00499 | $0.00749 | yes (Jev estimated) |
+| `2026-09-30-324eedb-deepseek-auto-all-k3` | packet (5) + dev cases I created (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 100.0% | 44/44 | 100.0% / 100.0% | 2.4 s / 7.7 s | $0.00090 | $0.00131 | yes (Jev estimated) |
+| `2026-09-30-324eedb-deepseek-auto-holdout-v2-k3` | blind set v2 I created (current at the time) | deepseek-flash | jev (+llm:deepseek) | 129 | 79.8% | 32/43 | 100.0% / 93.3% | 2.5 s / 8.2 s | $0.00107 | $0.00226 | yes (Jev estimated) |
+| `2026-09-30-324eedb-deepseek-auto-regression-v1-k3` | blind set v1 I created (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 126 | 97.6% | 39/42 | 100.0% / 97.3% | 2.6 s / 6.1 s | $0.00098 | $0.00142 | yes (Jev estimated) |
+| `2026-09-30-324eedb-deepseek-jev-only-holdout-v2-k1` | blind set v2 I created (current at the time) | deepseek-flash | jev | 43 | 81.4% | 35/43 | 100.0% / 93.3% | 2.1 s / 7.0 s | $0.00070 | $0.00144 | yes (Jev estimated) |
+| `2026-09-30-324eedb-deepseek-llm-only-holdout-v2-k1` | blind set v2 I created (current at the time) | deepseek-flash | llm:deepseek | 43 | 86.0% | 37/43 | 100.0% / 93.3% | 4.4 s / 8.8 s | $0.00128 | $0.00240 | yes (Jev estimated) |
+| `2026-09-30-324eedb-gemini-auto-all-k1` | packet (5) + dev cases I created (39) | gemini-3.8-flash | jev (+llm:deepseek) | 44 | 100.0% | 44/44 | 100.0% / 100.0% | 2.0 s / 3.6 s | $0.00503 | $0.00738 | yes (Jev estimated) |
+| `2026-09-30-324eedb-gemini-auto-holdout-v2-k3` | blind set v2 I created (current at the time) | gemini-3.8-flash | jev (+llm:deepseek) | 129 | 86.0% | 37/43 | 100.0% / 93.3% | 1.9 s / 4.2 s | $0.00424 | $0.00792 | yes (Jev estimated) |
+| `2026-09-30-324eedb-gemini-auto-regression-v1-k1` | blind set v1 I created (retired → regression) | gemini-3.8-flash | jev (+llm:deepseek) | 42 | 95.2% | 40/42 | 100.0% / 92.3% | 2.1 s / 3.7 s | $0.00499 | $0.00749 | yes (Jev estimated) |
 
 **Superseded runs** (measured on 1dd5717, before the fixes informed by blind set v3 (which is regression data now)):
 
 | Run | Set | Writer | Router | Runs | Pass | pass^k | Esc. recall / precision | Latency p50 / p95 | Cost per input | Cost per successful answer | Cost complete |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `2026-09-30-1dd5717-deepseek-auto-all-k3` | packet (5) + our dev cases (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 93.9% | 40/44 | 100.0% / 100.0% | 2.5 s / 7.3 s | $0.00084 | $0.00135 | yes (Jev estimated) |
-| `2026-09-30-1dd5717-deepseek-auto-holdout-v3-k3` | our blind set v3 (current at the time) | deepseek-flash | jev (+llm:deepseek) | 144 | 95.1% | 45/48 | 100.0% / 93.8% | 2.5 s / 6.9 s | $0.00098 | $0.00153 | yes (Jev estimated) |
-| `2026-09-30-1dd5717-deepseek-auto-regression-v1-k1` | our blind set v1 (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 42 | 97.6% | 41/42 | 100.0% / 92.3% | 2.7 s / 5.5 s | $0.00084 | $0.00122 | yes (Jev estimated) |
-| `2026-09-30-1dd5717-deepseek-auto-regression-v2-k3` | our blind set v2 (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 129 | 93.0% | 40/43 | 100.0% / 100.0% | 2.5 s / 6.7 s | $0.00080 | $0.00132 | yes (Jev estimated) |
-| `2026-09-30-1dd5717-deepseek-jev-only-holdout-v3-k1` | our blind set v3 (current at the time) | deepseek-flash | jev | 48 | 93.8% | 45/48 | 100.0% / 88.2% | 2.6 s / 7.5 s | $0.00071 | $0.00113 | yes (Jev estimated) |
-| `2026-09-30-1dd5717-deepseek-llm-only-holdout-v3-k1` | our blind set v3 (current at the time) | deepseek-flash | llm:deepseek | 48 | 97.9% | 47/48 | 100.0% / 100.0% | 4.8 s / 8.7 s | $0.00132 | $0.00198 | yes (Jev estimated) |
-| `2026-09-30-1dd5717-gemini-auto-holdout-v3-k3` | our blind set v3 (current at the time) | gemini-3.8-flash | jev (+llm:deepseek) | 144 | 95.8% | 45/48 | 100.0% / 97.8% | 2.1 s / 4.5 s | $0.00415 | $0.00642 | yes (Jev estimated) |
-| `2026-09-30-1dd5717-gemini-auto-regression-v2-k1` | our blind set v2 (retired → regression) | gemini-3.8-flash | jev (+llm:deepseek) | 43 | 93.0% | 40/43 | 100.0% / 100.0% | 2.0 s / 4.8 s | $0.00502 | $0.00831 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-deepseek-auto-all-k3` | packet (5) + dev cases I created (39) | deepseek-flash | jev (+llm:deepseek) | 132 | 93.9% | 40/44 | 100.0% / 100.0% | 2.5 s / 7.3 s | $0.00084 | $0.00135 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-deepseek-auto-holdout-v3-k3` | blind set v3 I created (current at the time) | deepseek-flash | jev (+llm:deepseek) | 144 | 95.1% | 45/48 | 100.0% / 93.8% | 2.5 s / 6.9 s | $0.00098 | $0.00153 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-deepseek-auto-regression-v1-k1` | blind set v1 I created (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 42 | 97.6% | 41/42 | 100.0% / 92.3% | 2.7 s / 5.5 s | $0.00084 | $0.00122 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-deepseek-auto-regression-v2-k3` | blind set v2 I created (retired → regression) | deepseek-flash | jev (+llm:deepseek) | 129 | 93.0% | 40/43 | 100.0% / 100.0% | 2.5 s / 6.7 s | $0.00080 | $0.00132 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-deepseek-jev-only-holdout-v3-k1` | blind set v3 I created (current at the time) | deepseek-flash | jev | 48 | 93.8% | 45/48 | 100.0% / 88.2% | 2.6 s / 7.5 s | $0.00071 | $0.00113 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-deepseek-llm-only-holdout-v3-k1` | blind set v3 I created (current at the time) | deepseek-flash | llm:deepseek | 48 | 97.9% | 47/48 | 100.0% / 100.0% | 4.8 s / 8.7 s | $0.00132 | $0.00198 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-gemini-auto-holdout-v3-k3` | blind set v3 I created (current at the time) | gemini-3.8-flash | jev (+llm:deepseek) | 144 | 95.8% | 45/48 | 100.0% / 97.8% | 2.1 s / 4.5 s | $0.00415 | $0.00642 | yes (Jev estimated) |
+| `2026-09-30-1dd5717-gemini-auto-regression-v2-k1` | blind set v2 I created (retired → regression) | gemini-3.8-flash | jev (+llm:deepseek) | 43 | 93.0% | 40/43 | 100.0% / 100.0% | 2.0 s / 4.8 s | $0.00502 | $0.00831 | yes (Jev estimated) |
 <!-- bench:end -->
 
 </details>
 
-### How we measure (one line each)
+### How I measure (one line each)
 
 | Metric | What it means |
 |---|---|
@@ -211,7 +263,7 @@ Generated by `npm run bench:table -- --write` from the committed artifacts in [`
 
 ## Tech stack
 
-| Layer | What we use |
+| Layer | What I use |
 |---|---|
 | Language and runtime | **TypeScript** on **Node.js 22+** (ES modules), run with `tsx` |
 | Validation and contracts | **zod** for input, `Reply`, memory and router answers; JSON Schema for model output |
@@ -220,7 +272,7 @@ Generated by `npm run bench:table -- --write` from the committed artifacts in [`
 | Rules as skills | Markdown skill files with YAML front matter (parsed with **gray-matter**): `core.md`, 17 skills, rule-bound policy facts |
 | Observability | **OpenTelemetry** + **OpenInference** spans, exported over OTLP to **Arize Phoenix** (Docker), plus an offline HTML dashboard |
 | Tests and CI | **Vitest** (200+ offline tests with scripted fake models), `tsc --noEmit`, and **GitHub Actions** on every push |
-| Evaluation | Our own runner: pass^k, a spend cap with in-flight reserve, published artifacts in `benchmarks/`, and README charts generated as SVG |
+| Evaluation | A custom runner: pass^k, a spend cap with in-flight reserve, published artifacts in `benchmarks/`, and README charts generated as SVG |
 
 ## What you need
 
@@ -243,6 +295,8 @@ Each reply is one trace: guards, router answers and merge decisions, gate rule, 
 
 - **Phoenix (optional, one command).** `docker compose up -d phoenix`, then set `PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006` in `.env`. Replies are exported as OpenInference spans (CHAIN, GUARDRAIL, TOOL, LLM, EVALUATOR) and viewed at http://localhost:6006. Export is off by default, failure-silent, and never changes a reply.
 - **Offline dashboard (no setup).** `npm run dashboard` writes one HTML file from `traces/`, `examples/` and `eval/results`, with a run overview, a per-message trace view, and a pass/fail grid per eval case.
+
+<img src="docs/img/dashboard.png" alt="Offline dashboard overview: headline numbers for the latest eval run and a comparison of every run, including the original-prompt baselines" width="100%">
 
 ---
 
@@ -329,15 +383,7 @@ A failed draft gets **one repair**. If that fails too, the draft is discarded en
 
 ## Setup
 
-See [What you need](#what-you-need) for Node, the API keys and Docker. CI runs the typecheck and all tests offline on every push.
-
-```bash
-npm run reply -- --input eval/packet.messages.json --output replies.json --trace traces/run.jsonl
-npm test && npm run typecheck                               # offline
-npx tsx scripts/bench-plan.ts --budget 2.50 --headroom 0.30 # every benchmark under one budget
-npm run bench:table -- --write && npx tsx scripts/readme-charts.ts --write   # regenerate README numbers
-npm run dashboard                                           # offline trace dashboard
-```
+See [How to replicate](#how-to-replicate) for every command and [What you need](#what-you-need) for Node, the keys and Docker. CI runs the typecheck and all tests offline on every push.
 
 <details>
 <summary><b>Repository layout</b></summary>
@@ -366,16 +412,16 @@ fixtures/original-system-prompt.txt   the original prompt, used only by the base
 </details>
 
 <details>
-<summary><b>Test sets, in detail</b></summary>
+<summary><b>Test sets I created, in detail</b></summary>
 
 | Set | Size | Role | File |
 |---|---|---|---|
 | The packet's examples | 5 | the messages and grading facts in the packet | `eval/packet.cases.ts` |
-| Our dev cases | 39 | built and tuned against, so not a generalization claim | `eval/dev.cases.ts` |
-| Our blind test set **v4** | 48 | **the current blind set**, frozen before its first run | `eval/holdout-v4.cases.ts` |
-| Our blind set v3 | 48 | retired: its failures informed fixes, so it's a regression check now | `eval/holdout-v3.cases.ts` |
-| Our blind set v2 | 43 | retired: its failures informed fixes, so it's a regression check now | `eval/holdout-v2.cases.ts` |
-| Our blind set v1 | 42 | retired: exposed by an external review, so it's a regression check now | `eval/holdout-v1.cases.ts` |
+| Dev cases I created | 39 | built and tuned against, so not a generalization claim | `eval/dev.cases.ts` |
+| Blind test set **v4** I created | 48 | **the current blind set**, frozen before its first run | `eval/holdout-v4.cases.ts` |
+| Blind set v3 I created | 48 | retired: its failures informed fixes, so it's a regression check now | `eval/holdout-v3.cases.ts` |
+| Blind set v2 I created | 43 | retired: its failures informed fixes, so it's a regression check now | `eval/holdout-v2.cases.ts` |
+| Blind set v1 I created | 42 | retired: exposed by an external review, so it's a regression check now | `eval/holdout-v1.cases.ts` |
 
 **Rule:** once a blind set informs a fix, it becomes regression data, and a new one is written for the next claim. Checksums are in `eval/HOLDOUT.sha256`, and `tests/holdout-freeze.test.ts` fails if any set changes. `tests/leakage.test.ts` fails if any expected sentence or sample message appears in `src/` or `domains/`.
 </details>
