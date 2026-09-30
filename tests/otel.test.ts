@@ -39,6 +39,17 @@ describe("OpenTelemetry export (OpenInference spans)", () => {
     expect(llmSpan.attributes["llm.token_count.prompt"]).toBe(100);
   });
 
+  it("marks every span OK or ERROR (never unset): a rejected draft is ERROR, the repair and the rest are OK", async () => {
+    const bad = () => ({ text: writerJson({ reply: "Your deposit has been charged." }) });
+    const good = (req: any) => ({ text: writerJson({ reply: `${tok(req.system, "Sapphire", "price+deposit")}.` }) });
+    const spans = await spansFor("What does Dr. Hakan Clinic cost?", decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) }), new FakeLlm([bad, good]));
+    const status = (name: string) => spans.find((s) => s.name === name)!.status.code;
+    expect(spans.every((s) => s.status.code === 1 || s.status.code === 2)).toBe(true); // 1 = OK, 2 = ERROR
+    expect(status("writer · draft")).toBe(2);
+    expect(status("writer · repair")).toBe(1);
+    expect(spans.find((s) => s.name.startsWith("reply "))!.status.code).toBe(1);
+  });
+
   it("an escalation exports without writer spans and never carries card digits", async () => {
     const spans = await spansFor(
       "Charge the deposit on my card ending in 4242 right now.",

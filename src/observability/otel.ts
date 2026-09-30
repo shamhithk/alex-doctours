@@ -52,7 +52,8 @@ const json = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v ?? nu
 
 function child(tracer: Tracer, parent: Span, name: string, start: number, end: number, attrs: Record<string, any>, error?: string) {
   const s = tracer.startSpan(name, { startTime: start, attributes: clean(attrs) }, otel.setSpan(context.active(), parent));
-  if (error) s.setStatus({ code: SpanStatusCode.ERROR, message: error });
+  // Explicit status on every span: ERROR for a failure (rejected draft, failed call), OK otherwise.
+  s.setStatus(error ? { code: SpanStatusCode.ERROR, message: error } : { code: SpanStatusCode.OK });
   s.end(Math.max(end, start));
   return s;
 }
@@ -89,7 +90,7 @@ export function emit(tracer: Tracer, t: Trace) {
       [SC.LLM_TOKEN_COUNT_COMPLETION]: t.usage.outputTokens || undefined,
     }),
   });
-  if (t.error) root.setStatus({ code: SpanStatusCode.ERROR, message: t.error });
+  root.setStatus(t.error ? { code: SpanStatusCode.ERROR, message: t.error } : { code: SpanStatusCode.OK });
 
   const g = step("guards");
   if (g) child(tracer, root, "input guards", g.start, g.end, { [SC.OPENINFERENCE_SPAN_KIND]: K.GUARDRAIL, [SC.INPUT_VALUE]: t.message, [SC.OUTPUT_VALUE]: json({ fastPath: t.rulesFired.includes("gate.human-fast-path") }) });
