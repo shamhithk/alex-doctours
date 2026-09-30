@@ -76,10 +76,15 @@ describe("policy gate", () => {
     const d = decision({ paymentMode: choice("link_request", 0.95), clinicLean: choice(HEVA) });
     expect(gate(d, g0, names).route).toBe("answer");
   });
-  it("an ambiguous clinic reference gets one clarifying question", () => {
-    const r = gate(decision({ clinicMentioned: choice("ambiguous", 0.8) }), g0, names);
+  it("an ambiguous clinic reference gets one clarifying question when the answer depends on the clinic", () => {
+    const r = gate(decision({ clinicMentioned: choice("ambiguous", 0.8), skills: { "clinic-packages": 0.9 } }), g0, names);
     expect(r.route).toBe("clarify");
     expect(r.clarifyQuestion).toContain("Heva Clinic or Dr. Hakan Clinic");
+    expect(gate(decision({ clinicMentioned: choice("ambiguous", 0.8), paymentMode: choice("link_request") }), g0, names).route).toBe("clarify");
+  });
+  it("a policy question is answered even if the clinic reference is ambiguous (same answer for every clinic)", () => {
+    const r = gate(decision({ clinicMentioned: choice("ambiguous", 0.8), skills: { payment: 0.9 }, paymentMode: choice("policy_question") }), g0, names);
+    expect(r.route).toBe("answer");
   });
   it("marks uncertain terminal signals and flagged actions for a second opinion", () => {
     expect(secondOpinionReasons(decision({ needsHuman: 0.5 }))).toEqual(["uncertain:needsHuman"]);

@@ -32,7 +32,9 @@ describe("workflow: handoff is terminal", () => {
     const { reply, trace } = await respond({ id: "c", text: "Charge the deposit on my card ending in 4242 right now." }, deps(d, llm));
     expect(reply).toMatchObject({ escalate: true, attachmentUrls: null, shouldFollowUp: false });
     expect(reply.response).not.toContain("4242");
-    expect(JSON.stringify(trace)).not.toContain("4242");
+    // Timing fields are epoch milliseconds and can contain "4242" by chance; everything else must not.
+    const TIMING = new Set(["start", "end", "startedAt", "at", "latencyMs", "ms"]);
+    expect(JSON.stringify(trace, (k, v) => (TIMING.has(k) ? undefined : v))).not.toContain("4242");
     expect(trace.commits).toBeUndefined();
     expect(llm.requests).toHaveLength(0);
   });
@@ -344,5 +346,19 @@ describe("review 2: end-to-end probes", () => {
     } finally {
       ToolExecutor.prototype.run = run;
     }
+  });
+});
+
+describe("selection writes need preference wording (holdout-v2 defect)", () => {
+  const draft = (req: any) => ({ text: writerJson({ reply: `${tok(req.system, "Silver", "inclusions")}.` }) });
+  const lean = decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HEVA), clinicLean: choice(HEVA, 0.9), packageLean: choice("44444444-4444-4444-8444-444444444441", 0.95) });
+  it("a question that names a package saves nothing, even if the router reports a lean", async () => {
+    const { trace } = await respond({ id: "s1", text: "what's actually included in heva's silver package?" }, deps(lean, new FakeLlm([draft])));
+    expect(trace.commits ?? []).toEqual([]);
+    expect(trace.commitSkipped).toContain("router lean without any preference wording in the message; nothing saved");
+  });
+  it("an explicit choice is saved", async () => {
+    const { trace } = await respond({ id: "s2", text: "I'll go with Silver at Heva. what's included?" }, deps(lean, new FakeLlm([draft])));
+    expect(trace.commits).toEqual([expect.objectContaining({ tool: "updateUserClinicPreferences", ok: true })]);
   });
 });

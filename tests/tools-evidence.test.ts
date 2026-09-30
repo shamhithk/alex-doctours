@@ -262,3 +262,71 @@ describe("claim guards on the writer's own prose (review 2, finding 1)", () => {
     expect(check("Okay.", { memory: { promisesMade: "Check in after 1 month if no reply" }, should_follow_up: true, follow_up_timing: "1 month" })).toEqual([]);
   });
 });
+
+describe("claim guards: false positives found on holdout-v2 (now regression data)", () => {
+  const vctx = (l: Ledger) => ({ ledger: l, patientText: "question", neverEcho: [], loadedRulesText: "", linksAlreadySent: [], paymentSkillLoaded: true });
+  const check = (reply: string, withSaved = false) => {
+    const ex = new ToolExecutor(USER);
+    const l = ledgerWithHeva();
+    l.ingest(ex.run("getClinicPackages", { clinicId: HAKAN }, "code")); // both clinics' names count as the offer
+    if (withSaved) l.ingest(ex.run("getSavedClinics", {}, "code"));
+    l.addPolicyFacts(factsFor(loadDomain(), ["payment", "reversibility", "financing"]));
+    const { out } = coerceWriterOutput(JSON.parse(writerJson({ reply })));
+    const r = render(out!, l);
+    return [...r.violations, ...validate(out!, r.rendered, vctx(l))].filter((v) => v.severity === "hard").map((v) => v.code);
+  };
+
+  it.each([
+    "{{R:transfer}}, so if you later decide on Dr. Hakan Clinic, the deposit can move over as long as your flights aren't purchased yet.",
+    "Klarna or PayPal can cover it as a one-time payment.",
+    "Once you buy flights for Dr. Hakan Clinic, the deposit can no longer move.",
+    "A loose front-opening top is the easy way to stay covered up.",
+    "{{R:lock-in}}, so once your flights are purchased, that closes the window.",
+    "You can pay the balance in a single payment.",
+    "The balance is paid through Doctours, and the first payment is charged when you start layaway.",
+  ])("allows ordinary wording: %j", (reply) => {
+    expect(check(reply)).toEqual([]);
+  });
+
+  it("allows an amenity the inclusions token in the same sentence actually states, and nothing more", () => {
+    const l = ledgerWithHeva();
+    const silver = refOf(l, "Silver");
+    expect(check(`Yes, the hotel is part of it: {{${silver}:inclusions}}.`)).toEqual([]);
+    expect(check(`{{${silver}:inclusions}}, and flights are part of it too.`)).toContain("UNSOURCED_INCLUSION");
+  });
+
+  it("allows a clinic count only when it matches FACTS", () => {
+    expect(check("Your two saved clinics both work with afro hair.", true)).not.toContain("UNSOURCED_QUANTITY");
+    expect(check("Your three saved clinics are great.", true)).toContain("UNSOURCED_QUANTITY");
+  });
+
+  it("still rejects completion claims and 'your X is <done>'", () => {
+    expect(check("Your deposit has been charged.")).toContain("FALSE_ACTION");
+    expect(check("Your deposit is charged.")).toContain("FALSE_ACTION");
+    expect(check("Your date is now confirmed.")).toContain("FALSE_ACTION");
+    expect(check("I've updated your clinic.")).toContain("UNBACKED_PERSISTENCE");
+  });
+});
+
+describe("evidence and fallback triggers (holdout-v2 defects)", () => {
+  it("prefetches doctors for plural wording ('surgeons', 'doctors')", async () => {
+    const { prefetch } = await import("../src/evidence/prefetch.js");
+    const { buildContext } = await import("../src/context.js");
+    const { decision } = await import("./helpers.js");
+    for (const text of ["who are the actual surgeons at both clinics", "which doctors work there?"]) {
+      const ex = new ToolExecutor(USER);
+      prefetch(["clinic-packages"], decision(), buildContext(), text, ex, new Ledger());
+      expect(ex.records.some((r) => r.tool === "getClinicDoctors"), text).toBe(true);
+    }
+  });
+
+  it("the fallback does not answer a payment-method question with a price list", async () => {
+    const { buildFallback } = await import("../src/writer/fallback.js");
+    const { decision } = await import("./helpers.js");
+    const l = ledgerWithHeva();
+    const fb = buildFallback(["clinic-packages", "financing", "payment"], l, "can I break the $500 deposit into a couple payments w klarna?", decision());
+    expect("out" in fb && fb.out.reply).not.toMatch(/\$|price\+deposit/);
+    const price = buildFallback(["clinic-packages"], l, "how much is gold?", decision());
+    expect("out" in price && price.out.reply).toContain(":price+deposit}}");
+  });
+});
