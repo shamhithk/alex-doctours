@@ -147,7 +147,7 @@ async function runWriterInner(
       { role: "assistant", content: first.rawText || "(empty)" },
       {
         role: "user",
-        content: `Your json broke these rules:\n${problems}\nReturn a corrected json object only. Keep everything that was correct. Use {{F#}} tokens for money, link ids for URLs, and name the package or clinic in each sentence that uses its token.`,
+        content: `Your json broke these rules:\n${problems}\nReturn a corrected json object only. Keep everything that was correct. State facts only with clause tokens from FACTS (e.g. {{P2:price+deposit}}, {{P2:inclusions}}, {{R:refund}}); each token already names its package or clinic. Put link ids in link_ids instead of typing URLs. Remove any claim that an action was done.`,
       },
     ],
     "repair",

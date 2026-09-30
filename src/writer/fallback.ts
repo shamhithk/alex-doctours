@@ -50,8 +50,10 @@ export function buildFallback(skills: string[], ledger: Ledger, text: string, d:
   }
   if (skills.includes("consultation") && /\bconsult/.test(t)) {
     const link = ledger.links.find((l) => l.url.endsWith("/consultation"));
-    parts.push("The consultation is free, and it's a phone call with our team." + (link ? " You can book it using the link below." : ""));
-    sources.push("consultation.free", "consultation.format");
+    if (ledger.renderClause("R", "consultation") !== null) {
+      parts.push("{{R:consultation}}." + (link ? " You can book it using the link below." : ""));
+      sources.push("R:consultation");
+    } else if (link) parts.push("You can book the consultation using the link below.");
     if (link) links.push(link.id);
   }
   const reply = parts.length ? parts.join(" ") : "I don't have that exact detail.";

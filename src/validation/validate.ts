@@ -1,5 +1,6 @@
 import type { Ledger } from "../evidence/ledger.js";
 import { collapseDigits } from "../guards/input.js";
+import { claimViolations, memoryViolations } from "./claims.js";
 
 export interface WriterOutput {
   reply: string;
@@ -98,18 +99,13 @@ export interface ValidateContext {
   paymentSkillLoaded: boolean;
   /** True when the router saw a payment-link request. */
   linkRequested?: boolean;
+  /** A clinic/package selection write is planned this turn (so "noted"/"saved" has a receipt pending). */
+  selectionWritePlanned?: boolean;
+  /** Follow-up code will schedule even if the draft doesn't (pause default), e.g. "1 month". */
+  codeFollowUp?: string | null;
 }
 
 const ASKS_FOR_LINK = /\b(?:links?|website|site|web\s?page|page|url|where\s+(?:can|do)\s+i|how\s+(?:can|do)\s+i\s+(?:pay|book|see)|pay\s+(?:from|through|via|online)|book)\b/i;
-
-const NUMBER = String.raw`(?:\d[\d,]*(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|a hundred|hundred)`;
-const QUANTITY_PATTERNS: RegExp[] = [
-  /[$€£]\s?\d[\d,]*(?:\.\d+)?/gi,
-  /\b\d[\d,]*(?:\.\d+)?\s?(?:usd|eur|gbp|dollars?|euros?|pounds?|lira|tl)\b/gi,
-  /\b(?:usd|eur|gbp)\s?\d[\d,]*(?:\.\d+)?/gi,
-  new RegExp(String.raw`\b${NUMBER}\s+(?:extra\s+|more\s+|additional\s+|hotel\s+)?(?:nights?|grafts?|days?|weeks?|months?|years?|hours?|miles?|minutes?|sessions?|packages?|installments?|payments?)\b`, "gi"),
-  /\b\d+(?:\.\d+)?\s?(?:%|percent)/gi,
-];
 
 const OFF_CHANNEL: [RegExp, string][] = [
   [/\bI(?:'ll| will)\s+(?:send|email|forward|pass)\b/i, "promises to send something later"],
@@ -132,17 +128,18 @@ export function validate(out: WriterOutput, r: Rendered, c: ValidateContext): Vi
   if (URL_RE.test(raw)) v.push({ code: "URL_IN_TEXT", severity: "hard", detail: "Typed a URL; use link_ids instead." });
   URL_RE.lastIndex = 0;
 
-  // Quantity guard: any money amount or unit quantity the writer typed itself must be a figure
-  // stated verbatim in a loaded rule (e.g. "$25", "24 hours", "two weeks"). Commercial facts come
-  // only from clause tokens. Numbers quoted by the patient are never authority.
-  const own = raw.replace(TOKEN_RE, " ");
-  const rules = c.loadedRulesText.toLowerCase().replace(/\s+/g, " ");
-  for (const re of QUANTITY_PATTERNS) {
-    for (const m of own.matchAll(re)) {
-      const phrase = m[0].toLowerCase().replace(/\s+/g, " ").trim();
-      if (!rules.includes(phrase)) v.push({ code: "UNSOURCED_QUANTITY", severity: "hard", detail: `Typed "${m[0].trim()}"; use a clause token from FACTS.` });
-    }
-  }
+  // Claim guards on the writer's own prose: numbers, inclusions and policy terms only via
+  // clause tokens; completed actions and saves need a receipt; memory is checked separately.
+  const pkgs = c.ledger.allEntities().filter((e) => e.kind === "package") as { name: string; included: { name: string }[] }[];
+  v.push(
+    ...claimViolations(out, {
+      offerNames: c.ledger.allEntities().flatMap((e) => ("name" in e && e.name ? [e.name] : [])),
+      addonNames: pkgs.flatMap((p) => p.included.map((a) => a.name)),
+      selectionWritePlanned: c.selectionWritePlanned === true,
+      codeFollowUp: c.codeFollowUp,
+    }),
+    ...memoryViolations(out, c.neverEcho, collapseDigits, c.codeFollowUp),
+  );
   // Redundant tokens: two clauses that state the same fact, or a list clause used as a lead-in.
   const used = [...raw.matchAll(TOKEN_RE)].map((m) => `${m[1]}:${m[2]}`);
   const has = (t: string) => used.includes(t);
