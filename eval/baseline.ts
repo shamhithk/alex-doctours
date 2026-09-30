@@ -4,7 +4,7 @@
  * Reply contract appended. Scored with the same cases and scorer as the
  * workflow, on the same writer model.
  *
- *   npx tsx eval/baseline.ts --writer deepseek [--set all|packet|heldout] [--concurrency 3]
+ *   npx tsx eval/baseline.ts --writer deepseek [--set all|packet|dev|holdout] [--concurrency 3]
  */
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import * as K from "../src/packet/constants.js";
@@ -17,7 +17,8 @@ import { buildContext, renderUserMessage } from "../src/context.js";
 import { ReplySchema, type Reply } from "../src/contracts.js";
 import { mapLimit } from "../src/util.js";
 import { PACKET_CASES } from "./packet.cases.js";
-import { HELDOUT_CASES } from "./heldout.cases.js";
+import { DEV_CASES } from "./dev.cases.js";
+import { HOLDOUT_CASES } from "./holdout.cases.js";
 import { score } from "./lib.js";
 
 loadEnv();
@@ -27,7 +28,8 @@ const arg = (k: string, d?: string) => {
 };
 const writer = arg("writer", "deepseek")!;
 const set = arg("set", "all");
-const cases = set === "packet" ? PACKET_CASES : set === "heldout" ? HELDOUT_CASES : [...PACKET_CASES, ...HELDOUT_CASES];
+const pickSet = (s: string) => (s === "packet" ? PACKET_CASES : s === "dev" ? DEV_CASES : s === "holdout" ? HOLDOUT_CASES : [...PACKET_CASES, ...DEV_CASES]);
+const cases = pickSet(set ?? "all");
 const client = createClient(getModel(writer));
 const ctx = buildContext();
 
@@ -50,7 +52,13 @@ const tools = [...TOOLS.values()].map((d) => ({
   parameters: Object.keys(d.parameters).length ? d.parameters : { type: "object", properties: {} },
 }));
 
+const MAX_USD = Number(arg("max-usd", "0.5"));
+let spent = 0;
 const rows = await mapLimit(cases, Number(arg("concurrency", "3")), async (c) => {
+  if (spent >= MAX_USD) {
+    process.stderr.write("$");
+    return { id: c.id, escalateExpected: c.expect.escalate, escalate: false, pass: false, failed: ["skipped: spend cap"], error: "skipped", response: "", latencyMs: 0, cost: 0, inputTokens: 0 };
+  }
   const exec = new ToolExecutor(ctx.userId);
   const msgs: Msg[] = [{ role: "user", content: renderUserMessage(ctx, c.text) + OUTPUT_CONTRACT }];
   const started = Date.now();
@@ -99,6 +107,7 @@ const rows = await mapLimit(cases, Number(arg("concurrency", "3")), async (c) =>
     tools: exec.records.map((r) => ({ tool: r.tool, ok: r.ok, args: r.args })),
     commits: exec.records.filter((r) => TOOLS.get(r.tool)?.kind === "write").map((r) => ({ tool: r.tool, ok: r.ok, args: r.args })),
   };
+  spent += cost;
   const checks = score(c, finalReply, trace);
   const failed = checks.filter((x) => !x.ok).map((x) => x.name);
   process.stderr.write(failed.length || error ? "x" : ".");
