@@ -1,10 +1,10 @@
 [
   {
-    "response": "Heva specializes in Afro hair, so your 4C curls are right in their wheelhouse.\n\nThey have two packages: Silver at $3,000 USD with a $500 deposit, and Gold at $4,500 USD with a $600 deposit.\n\nAnd yes, you can pay straight from your assessment — each package has a Book button that opens the Doctours deposit checkout. The link below takes you there.\nhttps://www.doctours.com/assessment/c3d4e5f6-3333-4333-8333-333333333333",
+    "response": "Yes — Heva Clinic specializes in Afro hair, so 4C curls are right in their wheelhouse. Heva Clinic has two packages: Silver is $3,000 USD with a $500 deposit, and Gold is $4,500 USD with a $600 deposit. And yes, you can pay the deposit straight from your assessment — each package has a Book button that opens the Doctours checkout. You can open it using the link below.\nhttps://www.doctours.com/assessment/c3d4e5f6-3333-4333-8333-333333333333",
     "escalate": false,
     "escalationReason": null,
     "templateId": null,
-    "intent": "answer package list and payment path for Heva",
+    "intent": "answer package list, payment from assessment, afro hair fit",
     "shouldFollowUp": false,
     "followUpTiming": null,
     "attachmentUrls": null,
@@ -12,7 +12,7 @@
     "workingMemoryUpdates": null
   },
   {
-    "response": "Dr. Hakan Clinic has one package, Sapphire, at $3,200 USD, and the deposit to book it is $500.",
+    "response": "Dr. Hakan Clinic has one package — Sapphire is $3,200 USD with a $500 deposit.",
     "escalate": false,
     "escalationReason": null,
     "templateId": null,
@@ -24,11 +24,11 @@
     "workingMemoryUpdates": null
   },
   {
-    "response": "Yes, the consultation is free — it's a phone call with our team, not the clinic. Nothing is on the calendar yet, so you can pick a time using the link below.\nhttps://www.doctours.com/consultation",
+    "response": "Yes, it's free. It's a phone call with the Doctours team — the consultant calls you at the scheduled time. You can book one using the link below.\nhttps://www.doctours.com/consultation",
     "escalate": false,
     "escalationReason": null,
     "templateId": null,
-    "intent": "answer consultation cost and format",
+    "intent": "answer consultation cost",
     "shouldFollowUp": false,
     "followUpTiming": null,
     "attachmentUrls": null,

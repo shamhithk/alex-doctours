@@ -1,0 +1,49 @@
+{
+  "commit": "f8e965a",
+  "dirtyWorkingTree": true,
+  "codeHash": "668df7edd14553b21a5c0ea057dead52616d2c1a84b2da600e297e24024b5eae",
+  "date": "2026-09-30T04:05:14.641Z",
+  "set": "holdout",
+  "k": 1,
+  "writer": {
+    "key": "deepseek",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "reasoning": "low",
+    "json": "object",
+    "price": {
+      "input": 0.3,
+      "output": 1.2,
+      "cachedInput": 0.006
+    }
+  },
+  "router": "jev",
+  "classifier": "deepseek",
+  "thresholds": {
+    "act": 0.6,
+    "uncertainLow": 0.35,
+    "skill": 0.6,
+    "policyOverride": 0.7
+  },
+  "skills": {
+    "assessment": 1,
+    "call-context": 1,
+    "clinic-packages": 2,
+    "clinic-selection": 1,
+    "consultation": 2,
+    "creator": 1,
+    "financing": 1,
+    "general-faq": 1,
+    "images": 1,
+    "insurance-carecredit": 1,
+    "intake-collection": 1,
+    "pause": 1,
+    "payment": 2,
+    "promo-discount": 1,
+    "reversibility": 1,
+    "travel": 1,
+    "what-matters": 1
+  },
+  "spendCapUsd": 0.2,
+  "node": "v22.23.1"
+}

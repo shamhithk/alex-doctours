@@ -1,0 +1,40 @@
+{
+  "writer": "gemini",
+  "router": "jev (+llm:deepseek)",
+  "k": 3,
+  "cases": 44,
+  "runs": 132,
+  "passRate": "100.0%",
+  "passK": "44/44",
+  "passAny": "44/44",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "100.0%",
+  "falseEscalations": 0,
+  "nonEscalationCases": 30,
+  "writerOutcomes": {
+    "ok": 84,
+    "repaired": 3,
+    "none": 3
+  },
+  "promptTokensP50": 6420,
+  "latencyP50ms": 2010,
+  "latencyP95ms": 3389,
+  "costTotalUsd": 0.52966,
+  "costPerAnsweredUsd": 0.00566,
+  "costPerInputUsd": 0.00401,
+  "costPerSuccessfulAnswerUsd": 0.00589,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 1.1,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 9,
+    "leaves_question_unanswered": 3,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 4,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "wallMs": 68693
+}

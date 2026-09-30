@@ -1,0 +1,39 @@
+{
+  "writer": "deepseek",
+  "router": "llm:deepseek",
+  "k": 1,
+  "cases": 42,
+  "runs": 42,
+  "passRate": "97.6%",
+  "passK": "41/42",
+  "passAny": "41/42",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "100.0%",
+  "falseEscalations": 0,
+  "nonEscalationCases": 30,
+  "writerOutcomes": {
+    "ok": 28,
+    "repaired": 2
+  },
+  "promptTokensP50": 5619,
+  "latencyP50ms": 4135,
+  "latencyP95ms": 6514,
+  "costTotalUsd": 0.0517,
+  "costPerAnsweredUsd": 0.00146,
+  "costPerInputUsd": 0.00123,
+  "costPerSuccessfulAnswerUsd": 0.00178,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 0.2,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 1,
+    "leaves_question_unanswered": 1,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 1,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "wallMs": 42574
+}
