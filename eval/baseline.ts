@@ -4,9 +4,10 @@
  * Reply contract appended. Scored with the same cases and scorer as the
  * workflow, on the same writer model.
  *
- *   npx tsx eval/baseline.ts --writer deepseek [--set all|packet|dev|holdout] [--concurrency 3]
+ *   npx tsx eval/baseline.ts --writer deepseek [--set all|packet|dev|regression-v1|holdout-v2] [--concurrency 2] [--max-usd 0.5]
  */
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import * as K from "../src/packet/constants.js";
 import { loadEnv } from "../src/deps.js";
 import { createClient, extractJson, type Msg } from "../src/llm/client.js";
@@ -18,7 +19,8 @@ import { ReplySchema, type Reply } from "../src/contracts.js";
 import { mapLimit } from "../src/util.js";
 import { PACKET_CASES } from "./packet.cases.js";
 import { DEV_CASES } from "./dev.cases.js";
-import { HOLDOUT_CASES } from "./holdout.cases.js";
+import { HOLDOUT_CASES as REGRESSION_V1_CASES } from "./holdout-v1.cases.js";
+import { HOLDOUT_V2_CASES } from "./holdout-v2.cases.js";
 import { score } from "./lib.js";
 
 loadEnv();
@@ -28,8 +30,9 @@ const arg = (k: string, d?: string) => {
 };
 const writer = arg("writer", "deepseek")!;
 const set = arg("set", "all");
-const pickSet = (s: string) => (s === "packet" ? PACKET_CASES : s === "dev" ? DEV_CASES : s === "holdout" ? HOLDOUT_CASES : [...PACKET_CASES, ...DEV_CASES]);
-const cases = pickSet(set ?? "all");
+const SETS: Record<string, typeof PACKET_CASES> = { packet: PACKET_CASES, dev: DEV_CASES, "regression-v1": REGRESSION_V1_CASES, "holdout-v2": HOLDOUT_V2_CASES, all: [...PACKET_CASES, ...DEV_CASES] };
+if (!SETS[set ?? "all"]) throw new Error(`unknown --set ${set}`);
+const cases = SETS[set ?? "all"];
 const client = createClient(getModel(writer));
 const ctx = buildContext();
 
@@ -53,9 +56,11 @@ const tools = [...TOOLS.values()].map((d) => ({
 }));
 
 const MAX_USD = Number(arg("max-usd", "0.5"));
+const CONCURRENCY = Number(arg("concurrency", "2"));
 let spent = 0;
-const rows = await mapLimit(cases, Number(arg("concurrency", "3")), async (c) => {
-  if (spent >= MAX_USD) {
+let maxCaseCost = 0.01; // reserve per in-flight case (the monolith costs ~$0.003 per case)
+const rows = await mapLimit(cases, CONCURRENCY, async (c) => {
+  if (spent + CONCURRENCY * maxCaseCost > MAX_USD) {
     process.stderr.write("$");
     return { id: c.id, escalateExpected: c.expect.escalate, escalate: false, pass: false, failed: ["skipped: spend cap"], error: "skipped", response: "", latencyMs: 0, cost: 0, inputTokens: 0 };
   }
@@ -108,6 +113,7 @@ const rows = await mapLimit(cases, Number(arg("concurrency", "3")), async (c) =>
     commits: exec.records.filter((r) => TOOLS.get(r.tool)?.kind === "write").map((r) => ({ tool: r.tool, ok: r.ok, args: r.args })),
   };
   spent += cost;
+  maxCaseCost = Math.max(maxCaseCost, cost);
   const checks = score(c, finalReply, trace);
   const failed = checks.filter((x) => !x.ok).map((x) => x.name);
   process.stderr.write(failed.length || error ? "x" : ".");
@@ -126,8 +132,28 @@ const summary = {
   inputTokensP50: [...rows.map((r) => r.inputTokens)].sort((a, b) => a - b)[Math.floor(rows.length / 2)],
   latencyP50ms: [...rows.map((r) => r.latencyMs)].sort((a, b) => a - b)[Math.floor(rows.length / 2)],
   costTotalUsd: Number(rows.reduce((a, r) => a + r.cost, 0).toFixed(4)),
+  skippedAtSpendCap: rows.filter((r) => r.error === "skipped").length,
 };
 console.log(JSON.stringify(summary, null, 2));
 for (const r of rows.filter((x) => !x.pass)) console.log(`FAIL ${r.id}: ${r.failed.join("; ")}${r.error ? ` | ${r.error}` : ""}\n   → ${JSON.stringify(r.response).slice(0, 200)}`);
 mkdirSync("eval/results", { recursive: true });
 writeFileSync(`eval/results/baseline-${writer}-${set}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`, JSON.stringify({ summary, rows }, null, 2));
+const summaryOut = arg("summary-out");
+if (summaryOut) writeFileSync(summaryOut, JSON.stringify(summary, null, 2));
+if (process.argv.includes("--publish")) {
+  const sh = (c: string) => {
+    try {
+      return execSync(c, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    } catch {
+      return "unknown";
+    }
+  };
+  const commit = sh("git rev-parse --short HEAD");
+  const dirty = sh("git status --porcelain -- src domains eval fixtures") !== "";
+  const dir = `benchmarks/${new Date().toISOString().slice(0, 10)}-${commit}${dirty ? "-dirty" : ""}-baseline-${writer}-${set}`;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(`${dir}/config.json`, JSON.stringify({ variant: "monolith-baseline", commit, dirtyWorkingTree: dirty, date: new Date().toISOString(), set, writer: getModel(writer), spendCapUsd: MAX_USD, concurrency: CONCURRENCY, node: process.version }, null, 2));
+  writeFileSync(`${dir}/summary.json`, JSON.stringify(summary, null, 2));
+  writeFileSync(`${dir}/results.jsonl`, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  console.error(`published ${dir}`);
+}

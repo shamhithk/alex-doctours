@@ -2,8 +2,13 @@
  * Live evaluation. Scores every requirement per case, repeats k times (pass^k),
  * and writes a JSON report to eval/results/.
  *
- *   npx tsx eval/run.ts --writer deepseek --router auto --k 1 [--set packet|dev|holdout|all] [--tag escalation]
- *                       [--concurrency 3] [--max-usd 1.00]   # spend cap: no new cases start once reached
+ *   npx tsx eval/run.ts --writer deepseek --router auto --k 1 [--set packet|dev|regression-v1|holdout-v2|all] [--tag escalation]
+ *                       [--concurrency 2] [--max-usd 1.00] [--summary-out file.json]
+ *
+ * Spend safety: a case starts only if (spent + reserve) stays under --max-usd, where the reserve
+ * covers every case still in flight (concurrency x the most expensive case seen, at least
+ * --min-case-usd). The run halts as soon as any case reports incomplete cost, since the cap
+ * can no longer be enforced from reported spend.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -15,7 +20,8 @@ import { buildQuestions } from "../src/decision/questions.js";
 import { mapLimit } from "../src/util.js";
 import { PACKET_CASES } from "./packet.cases.js";
 import { DEV_CASES } from "./dev.cases.js";
-import { HOLDOUT_CASES } from "./holdout.cases.js";
+import { HOLDOUT_CASES as REGRESSION_V1_CASES } from "./holdout-v1.cases.js";
+import { HOLDOUT_V2_CASES } from "./holdout-v2.cases.js";
 import type { EvalCase } from "./types.js";
 import { score } from "./lib.js";
 import { otelFromEnv } from "../src/observability/otel.js";
@@ -40,8 +46,16 @@ const deps = buildDeps(opts);
 if (arg("failover", "1") === "0") deps.writerFallback = undefined;
 const qs = buildQuestions(deps.domain, deps.ctx);
 
-const pickSet = (s: string) => (s === "packet" ? PACKET_CASES : s === "dev" ? DEV_CASES : s === "holdout" ? HOLDOUT_CASES : [...PACKET_CASES, ...DEV_CASES]);
-let cases: EvalCase[] = pickSet(set ?? "all");
+// holdout-v1 was exposed by the second review, so it is regression data now; holdout-v2 is the frozen set.
+const SETS: Record<string, EvalCase[]> = {
+  packet: PACKET_CASES,
+  dev: DEV_CASES,
+  "regression-v1": REGRESSION_V1_CASES,
+  "holdout-v2": HOLDOUT_V2_CASES,
+  all: [...PACKET_CASES, ...DEV_CASES],
+};
+if (!SETS[set ?? "all"]) throw new Error(`unknown --set ${set}; use ${Object.keys(SETS).join(" | ")}`);
+let cases: EvalCase[] = SETS[set ?? "all"];
 if (tag) cases = cases.filter((c) => c.tags.includes(tag));
 
 interface RunRow {
@@ -65,6 +79,14 @@ interface RunRow {
   outputBattery?: Record<string, number>;
   failover?: string;
   error?: string;
+  /** Hard violation codes across writer attempts (which guards fired). */
+  violations?: string[];
+  routerRetries?: number;
+  routerFallback?: boolean;
+  routerFailed?: boolean;
+  secondOpinion?: boolean;
+  unconfirmed?: string[];
+  stages?: { stage: string; costUsd: number | null; estimated?: boolean }[];
 }
 
 const otel = otelFromEnv();
@@ -73,16 +95,24 @@ const started = Date.now();
 console.error(`eval: writer=${opts.writer} router=${deps.routerName} cases=${cases.length} k=${k}`);
 const jobs = cases.flatMap((c) => Array.from({ length: k }, (_, run) => ({ c, run })));
 const MAX_USD = Number(arg("max-usd", "1"));
+const CONCURRENCY = Number(arg("concurrency", "2"));
+const MIN_CASE_USD = Number(arg("min-case-usd", "0.01"));
 let spent = 0;
-const rows = await mapLimit(jobs, Number(arg("concurrency", "3")), async ({ c, run }): Promise<RunRow> => {
-  if (spent >= MAX_USD) {
+let maxCaseCost = 0;
+let haltReason: string | null = null;
+const rows = await mapLimit(jobs, CONCURRENCY, async ({ c, run }): Promise<RunRow> => {
+  const reserve = CONCURRENCY * Math.max(maxCaseCost, MIN_CASE_USD);
+  if (!haltReason && spent + reserve > MAX_USD) haltReason = `spend cap: $${spent.toFixed(4)} spent + $${reserve.toFixed(4)} reserved for in-flight cases would exceed $${MAX_USD}`;
+  if (haltReason) {
     process.stderr.write("$");
-    return { id: c.id, run, pass: false, failed: ["skipped: spend cap reached"], route: "skipped", escalate: false, response: "", latencyMs: 0, costUsd: 0, costComplete: true, costEstimated: false, skipped: true, inputTokens: 0, outputTokens: 0 };
+    return { id: c.id, run, pass: false, failed: [`skipped: ${haltReason}`], route: "skipped", escalate: false, response: "", latencyMs: 0, costUsd: 0, costComplete: true, costEstimated: false, skipped: true, inputTokens: 0, outputTokens: 0 };
   }
   const { reply, trace } = await respond({ id: `${c.id}#${run}`, text: c.text }, deps, qs);
   otel?.export(trace);
   traces.push(trace);
   spent += trace.usage.costUsd;
+  maxCaseCost = Math.max(maxCaseCost, trace.usage.costUsd);
+  if (!trace.usage.costComplete && !haltReason) haltReason = `cost became incomplete on ${c.id}#${run}; stopping so the cap stays enforceable`;
   const checks = score(c, reply, trace);
   const failed = checks.filter((x) => !x.ok).map((x) => `${x.name}${x.detail ? ` (${x.detail})` : ""}`);
   process.stderr.write(failed.length ? "x" : ".");
@@ -106,6 +136,13 @@ const rows = await mapLimit(jobs, Number(arg("concurrency", "3")), async ({ c, r
     outputBattery: trace.outputBattery,
     failover: trace.writer?.providerFailover,
     error: trace.error,
+    violations: ((trace.writer?.attempts ?? []) as { violations?: { code: string; severity: string }[] }[]).flatMap((a) => (a.violations ?? []).filter((v) => v.severity === "hard").map((v) => v.code)),
+    routerRetries: trace.router?.retries ?? trace.routerFailure?.retries ?? 0,
+    routerFallback: trace.router?.fallbackUsed ?? false,
+    routerFailed: !!trace.routerFailure,
+    secondOpinion: (trace.router?.secondOpinion?.length ?? 0) > 0,
+    unconfirmed: trace.router?.unconfirmed ?? [],
+    stages: trace.usageByStage.map((u) => ({ stage: u.stage, costUsd: u.costUsd, ...(u.estimated ? { estimated: true } : {}) })),
   };
 });
 process.stderr.write("\n");
@@ -167,8 +204,45 @@ const summary = {
   ),
   providerFailovers: rowsRun.filter((r) => r.failover).length,
   internalErrors: rowsRun.filter((r) => r.error).length,
+  haltReason,
+  // Reliability: did stricter guards keep useful answers? (rates are over answered rows)
+  reliability: (() => {
+    const writerRows = answered.filter((r) => r.writerOutcome);
+    const n = Math.max(1, writerRows.length);
+    const ids = (rs: RunRow[]) => [...new Set(rs.map((r) => r.id))];
+    const falseEscRows = rowsRun.filter((r) => !caseMeta.get(r.id)!.expect.escalate && r.escalate);
+    const missedRows = rowsRun.filter((r) => caseMeta.get(r.id)!.expect.escalate && !r.escalate);
+    const count = (xs: string[]) => xs.reduce<Record<string, number>>((a, x) => ((a[x] = (a[x] ?? 0) + 1), a), {});
+    return {
+      firstDraftAcceptRate: pct(writerRows.filter((r) => r.writerOutcome === "ok").length / n),
+      repairRate: pct(writerRows.filter((r) => r.writerOutcome === "repaired").length / n),
+      fallbackRate: pct(writerRows.filter((r) => r.writerOutcome === "fallback").length / n),
+      falseEscalations: { runs: falseEscRows.length, cases: ids(falseEscRows) },
+      missedEscalations: { runs: missedRows.length, cases: ids(missedRows) },
+      routerRetries: rowsRun.reduce((a, r) => a + (r.routerRetries ?? 0), 0),
+      routerFallbacks: rowsRun.filter((r) => r.routerFallback).length,
+      routerFailures: rowsRun.filter((r) => r.routerFailed).length,
+      secondOpinionRate: pct(rowsRun.filter((r) => r.secondOpinion).length / Math.max(1, rowsRun.length)),
+      unconfirmedEscalations: rowsRun.filter((r) => (r.unconfirmed ?? []).length).length,
+      guardViolations: count(rowsRun.flatMap((r) => r.violations ?? [])),
+    };
+  })(),
+  // Complete stage costs: every call, grouped by stage (model-specific suffixes kept).
+  costByStage: (() => {
+    const out: Record<string, { calls: number; costUsd: number; unknownCalls: number; estimated: boolean }> = {};
+    for (const st of rowsRun.flatMap((r) => r.stages ?? [])) {
+      const g = (out[st.stage] ??= { calls: 0, costUsd: 0, unknownCalls: 0, estimated: false });
+      g.calls++;
+      if (st.costUsd === null) g.unknownCalls++;
+      else g.costUsd = Number((g.costUsd + st.costUsd).toFixed(6));
+      if (st.estimated) g.estimated = true;
+    }
+    return out;
+  })(),
   wallMs: Date.now() - started,
 };
+const summaryOut = arg("summary-out");
+if (summaryOut) writeFileSync(summaryOut, JSON.stringify(summary, null, 2));
 console.log(JSON.stringify(summary, null, 2));
 const failures = rowsRun.filter((r) => !r.pass);
 for (const f of failures) console.log(`FAIL ${f.id}#${f.run} [${f.route}] ${f.failed.join("; ")}\n     → ${JSON.stringify(f.response).slice(0, 260)}${f.error ? `\n     error: ${f.error}` : ""}`);
@@ -205,12 +279,15 @@ if (process.argv.includes("--publish")) {
     thresholds: THRESHOLDS,
     skills: Object.fromEntries([...deps.domain.skills.values()].map((s) => [s.id, s.version])),
     spendCapUsd: MAX_USD,
+    concurrency: CONCURRENCY,
+    minCaseReserveUsd: MIN_CASE_USD,
+    writerFailover: !!deps.writerFallback,
     node: process.version,
   };
   writeFileSync(`${dir}/config.json`, JSON.stringify(config, null, 2));
   writeFileSync(`${dir}/summary.json`, JSON.stringify(summary, null, 2));
   // Per-case results: responses are patient-facing text (card data is redacted on input and blocked on output).
-  writeFileSync(`${dir}/results.jsonl`, rows.map((r) => JSON.stringify({ id: r.id, run: r.run, pass: r.pass, failed: r.failed, route: r.route, escalate: r.escalate, response: r.response, latencyMs: r.latencyMs, costUsd: r.costUsd, costComplete: r.costComplete, writerOutcome: r.writerOutcome, skills: r.skills })).join("\n") + "\n");
+  writeFileSync(`${dir}/results.jsonl`, rows.map((r) => JSON.stringify({ id: r.id, run: r.run, pass: r.pass, failed: r.failed, route: r.route, escalate: r.escalate, response: r.response, latencyMs: r.latencyMs, costUsd: r.costUsd, costComplete: r.costComplete, writerOutcome: r.writerOutcome, violations: r.violations, routerRetries: r.routerRetries, routerFallback: r.routerFallback, routerFailed: r.routerFailed, secondOpinion: r.secondOpinion, unconfirmed: r.unconfirmed, skills: r.skills, stages: r.stages, error: r.error })).join("\n") + "\n");
   console.error(`published ${dir}`);
 }
 await otel?.shutdown();
