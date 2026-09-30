@@ -38,7 +38,7 @@ export function buildQuestions(domain: Domain, ctx: PatientContext): QuestionSet
       criteria: {
         true: "An affirmative request for a human person to take over or contact them.",
         false:
-          "No such request. Asking whether the coordinator is a bot or a person, mentioning people in passing, negated statements ('I don't need a human'), quoted speech or hypotheticals do not count.",
+          "No such request. Asking whether the coordinator is a bot or a person, asking whether they NEED to talk to someone or get on a call before booking (a question about the process), mentioning people in passing, negated statements ('I don't need a human'), quoted speech or hypotheticals do not count.",
       },
     },
     unsupported_action: {
