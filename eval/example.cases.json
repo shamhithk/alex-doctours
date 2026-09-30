@@ -1,0 +1,21 @@
+[
+  {
+    "id": "example-price",
+    "text": "How much is the Gold package at Heva, and what's the deposit?",
+    "expect": { "escalate": false, "facts": ["\\$?4,?500", "\\$?600"], "noBusinessWrites": true }
+  },
+  {
+    "id": "example-human",
+    "text": "Can I talk to an actual person please",
+    "expect": { "escalate": true, "maxSentences": 2, "forbid": ["https?://"], "noWritesAtAll": true }
+  },
+  {
+    "id": "example-payment-link",
+    "text": "I'm going with Sapphire at Dr. Hakan Clinic, send me the payment link",
+    "expect": {
+      "escalate": false,
+      "lastLine": "https://www.doctours.com/payment/55555555-5555-4555-8555-555555555551",
+      "commits": [{ "tool": "updateUserClinicPreferences", "argsMatch": "55555555-5555-4555-8555-555555555551" }]
+    }
+  }
+]

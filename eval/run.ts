@@ -4,13 +4,16 @@
  *
  *   npx tsx eval/run.ts --writer deepseek --router auto --k 1 [--set packet|dev|regression-v1|regression-v2|regression-v3|holdout-v4|all] [--tag escalation]
  *                       [--concurrency 2] [--max-usd 1.00] [--summary-out file.json]
+ *   npx tsx eval/run.ts --cases my-cases.json --k 1        # score your own test set (see eval/example.cases.json)
  *
  * Spend safety: a case starts only if (spent + reserve) stays under --max-usd, where the reserve
  * covers every case still in flight (concurrency x the most expensive case seen, at least
  * --min-case-usd). The run halts as soon as any case reports incomplete cost, since the cap
  * can no longer be enforced from reported spend.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { execSync } from "node:child_process";
 import { THRESHOLDS } from "../src/policy/gate.js";
 import { getModel } from "../src/models/registry.js";
@@ -35,7 +38,7 @@ const arg = (k: string, d?: string) => {
   return i >= 0 ? process.argv[i + 1] : d;
 };
 const k = Number(arg("k", "1"));
-const set = arg("set", "all");
+const set = arg("cases") ? `custom-${(arg("cases") ?? "").split("/").pop()!.replace(/\.[^.]+$/, "")}` : arg("set", "all");
 const tag = arg("tag");
 const opts: Options = {
   ...getDefaultOptions(),
@@ -58,8 +61,34 @@ const SETS: Record<string, EvalCase[]> = {
   "holdout-v4": HOLDOUT_V4_CASES,
   all: [...PACKET_CASES, ...DEV_CASES],
 };
-if (!SETS[set ?? "all"]) throw new Error(`unknown --set ${set}; use ${Object.keys(SETS).join(" | ")}`);
-let cases: EvalCase[] = SETS[set ?? "all"];
+// --cases <file>: score your own test set. A .ts/.js module exporting an EvalCase[] array, or a
+// .json array where regex fields (facts, forbid, followUpTiming, argsMatch) are case-insensitive strings.
+const casesFile = arg("cases");
+const toRe = (x: unknown) => (x instanceof RegExp ? x : new RegExp(String(x), "i"));
+async function loadCases(file: string): Promise<EvalCase[]> {
+  const abs = resolvePath(file);
+  let raw: any;
+  if (file.endsWith(".json")) raw = JSON.parse(readFileSync(abs, "utf8"));
+  else {
+    const mod = await import(pathToFileURL(abs).href);
+    raw = mod.default ?? Object.values(mod).find(Array.isArray);
+  }
+  if (!Array.isArray(raw)) throw new Error(`${file} must export (or contain) an array of test cases`);
+  return raw.map((c: any) => ({
+    ...c,
+    tags: c.tags ?? [],
+    expect: {
+      ...c.expect,
+      facts: c.expect?.facts?.map(toRe),
+      forbid: c.expect?.forbid?.map(toRe),
+      fields: c.expect?.fields ? { ...c.expect.fields, ...(c.expect.fields.followUpTiming ? { followUpTiming: toRe(c.expect.fields.followUpTiming) } : {}) } : undefined,
+      tools: c.expect?.tools?.map((t: any) => ({ ...t, ...(t.argsMatch ? { argsMatch: toRe(t.argsMatch) } : {}) })),
+      commits: c.expect?.commits?.map((t: any) => ({ ...t, ...(t.argsMatch ? { argsMatch: toRe(t.argsMatch) } : {}) })),
+    },
+  }));
+}
+if (!casesFile && !SETS[set ?? "all"]) throw new Error(`unknown --set ${set}; use ${Object.keys(SETS).join(" | ")}, or --cases <file>`);
+let cases: EvalCase[] = casesFile ? await loadCases(casesFile) : SETS[set ?? "all"];
 if (tag) cases = cases.filter((c) => c.tags.includes(tag));
 
 interface RunRow {
