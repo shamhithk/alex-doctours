@@ -275,3 +275,74 @@ describe("cost accounting by stage (review finding 6)", () => {
     expect(trace.usage.costComplete).toBe(false);
   });
 });
+
+describe("review 2: end-to-end probes", () => {
+  it("a draft claiming a completed charge is never sent, and its memory note is never committed", async () => {
+    const lie = () => ({ text: writerJson({ reply: "Your deposit has been charged.", memory: { promisesMade: "I charged your card" } }) });
+    const { reply, trace } = await respond({ id: "r1", text: "Ok go ahead with Gold" }, deps(decision({ skills: { "clinic-packages": 0.9, payment: 0.8 }, clinicMentioned: choice(HEVA) }), new FakeLlm([lie, lie])));
+    expect(reply.response).not.toMatch(/charged/i);
+    expect(JSON.stringify(reply.workingMemoryUpdates ?? {})).not.toMatch(/charged/i);
+    expect(JSON.stringify(trace.commits ?? [])).not.toMatch(/charged/i);
+    expect(trace.writer?.outcome).toBe("fallback");
+  });
+
+  it("malformed classifier output on a chest-pain message escalates, with the error and billed cost recorded", async () => {
+    const { LlmDecisionAdapter } = await import("../src/decision/llm.js");
+    const cls = new LlmDecisionAdapter(new FakeLlm([() => ({ text: "not JSON" }), () => ({ text: "not JSON" })]));
+    const { reply, trace } = await respond({ id: "r2", text: "I am having chest pain and trouble breathing." }, { ctx, domain, router: new Router(cls), writer: new FakeLlm([]) });
+    expect(reply.escalate).toBe(true);
+    expect(trace.error).toMatch(/not the answers json/);
+    expect(trace.usage.inputTokens).toBe(200);
+  });
+
+  it("total routing failure keeps every attempted call and marks cost incomplete", async () => {
+    const broken = (n: string) => ({ name: n, decide: async () => { throw new Error("down"); } });
+    const { reply, trace } = await respond({ id: "r3", text: "What does Gold cost?" }, { ctx, domain, router: new Router(broken("a") as any, broken("b") as any), writer: new FakeLlm([]) });
+    expect(reply.escalate).toBe(true);
+    expect(trace.usageByStage.map((s) => s.stage)).toEqual(["router:a:failed-call", "router:b:failed-call"]);
+    expect(trace.usage.costComplete).toBe(false);
+  });
+
+  it("a failed chunk keeps the usage of the chunks that were routed", async () => {
+    let n = 0;
+    const flaky = {
+      name: "flaky",
+      decide: async () => {
+        if (n++ === 1) throw new Error("chunk down");
+        return { ...decision(), raw: { usage: { inputTokens: 10, outputTokens: 1, costUsd: 0.01 } } };
+      },
+    };
+    const long = "I have a question about the clinics. ".repeat(700);
+    const { reply, trace } = await respond({ id: "r4", text: long }, { ctx, domain, router: new Router(flaky as any), writer: new FakeLlm([]) });
+    expect(reply.escalate).toBe(true);
+    expect(trace.usageByStage.filter((s) => s.stage === "router:flaky").length).toBeGreaterThanOrEqual(1);
+    expect(trace.usageByStage.some((s) => s.stage === "router:flaky:failed-call")).toBe(true);
+    expect(trace.usage.costComplete).toBe(false);
+  });
+
+  it("when the fallback writer also fails, both writers' calls are recorded", async () => {
+    const { trace } = await respond(
+      { id: "r5", text: "What does Dr. Hakan Clinic cost?" },
+      { ...deps(decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) }), new FakeLlm([])), writerFallback: new FakeLlm([]) },
+    );
+    expect(trace.usageByStage.filter((s) => s.stage.endsWith("failed-call")).length).toBe(2);
+    expect(trace.usage.costComplete).toBe(false);
+  });
+
+  it("a reply that says 'noted' without a successful write receipt is not sent", async () => {
+    const noted = () => ({ text: writerJson({ reply: "Noted, Heva it is.", memory: { keyConcerns: "wants Heva" } }) });
+    const { ToolExecutor } = await import("../src/tools/executor.js");
+    const run = ToolExecutor.prototype.run;
+    ToolExecutor.prototype.run = function (this: any, tool: string, args: any, origin: any) {
+      const rec = run.call(this, tool, args, origin);
+      return origin === "commit" ? { ...rec, ok: false, result: null } : rec;
+    } as any;
+    try {
+      const { reply, trace } = await respond({ id: "r6", text: "Heva it is" }, deps(decision({ skills: { "clinic-selection": 0.9 } }), new FakeLlm([noted])));
+      expect(reply.escalate).toBe(true);
+      expect(trace.rulesFired).toContain("commit.persistence-claim-without-receipt");
+    } finally {
+      ToolExecutor.prototype.run = run;
+    }
+  });
+});

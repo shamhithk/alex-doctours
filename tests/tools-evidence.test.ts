@@ -4,6 +4,7 @@ import { resolveToolName, toolSpecs, READ_TOOLS } from "../src/tools/registry.js
 import { Ledger } from "../src/evidence/ledger.js";
 import { render, validate, coerceWriterOutput, hard } from "../src/validation/validate.js";
 import { HAKAN, HEVA, SAPPHIRE, SILVER, writerJson } from "./helpers.js";
+import { factsFor, loadDomain } from "../src/skills/loader.js";
 
 const USER = "7c2e1a40-6b8f-4d3a-9e15-2f0a8b6c4d11";
 
@@ -130,10 +131,14 @@ describe("render + validate", () => {
     const { r } = run(l, writerJson({ reply: `Silver: {{${refOf(l, "Gold")}:price}}.` }));
     expect(r.text).toBe("Silver: Gold is $4,500 USD.");
   });
-  it("allows figures stated verbatim in a loaded rule", () => {
+  it("rejects rule figures typed by the writer; policy figures come from rule-bound {{R:...}} tokens (review 2, finding 1)", () => {
     const l = ledgerWithHeva();
-    const { v } = run(l, writerJson({ reply: "The deposit is refundable less a $25 cancellation fee, and the clinic confirms within 24 hours." }));
-    expect(codes(v)).not.toContain("UNSOURCED_QUANTITY");
+    const typed = run(l, writerJson({ reply: "The deposit is refundable less a $25 cancellation fee, and the clinic confirms within 24 hours." }));
+    expect(codes(typed.v)).toEqual(expect.arrayContaining(["UNSOURCED_QUANTITY", "UNSOURCED_POLICY"]));
+    l.addPolicyFacts(factsFor(loadDomain(), ["payment"]));
+    const tokens = run(l, writerJson({ reply: "{{R:refund}}, and {{R:date-confirmation}}." }));
+    expect(hard(tokens.v)).toEqual([]);
+    expect(tokens.r.text).toContain("The deposit is refundable, minus a $25 cancellation fee, until the lock-in date");
   });
   it("rejects unknown clause tokens, typed URLs and unknown link ids", () => {
     const l = ledgerWithHeva();
@@ -160,10 +165,12 @@ describe("render + validate", () => {
     const l = ledgerWithHeva();
     expect(codes(run(l, writerJson({ reply })).v)).toContain(code);
   });
-  it("allows the dated pause check-in", () => {
+  it("allows the dated pause check-in when a follow-up is scheduled (by the draft or by code)", () => {
     const l = ledgerWithHeva();
-    const { v } = run(l, writerJson({ reply: "Take the time you need. I'll check in next month if I don't hear from you, and if you'd like more or less time, tell me and I'll adjust." }));
-    expect(hard(v)).toEqual([]);
+    const reply = "Take the time you need. I'll check in next month if I don't hear from you, and if you'd like more or less time, tell me and I'll adjust.";
+    expect(hard(run(l, writerJson({ reply, should_follow_up: true, follow_up_timing: "1 month" })).v)).toEqual([]);
+    expect(hard(run(l, writerJson({ reply }), { codeFollowUp: "1 month" }).v)).toEqual([]);
+    expect(codes(run(l, writerJson({ reply })).v)).toContain("UNSCHEDULED_FOLLOW_UP");
   });
   it("caps attachments at 3", () => {
     const ex = new ToolExecutor(USER);
@@ -197,5 +204,61 @@ describe("redundant clause tokens", () => {
     const c = l.refFor(HEVA)!;
     const [p1, p2] = l.allEntities().filter((e) => e.kind === "package").map((e) => e.ref);
     expect(codes(l, `{{${c}:package-count}}: {{${p1}:price+deposit}}, and {{${p2}:price+deposit}}.`)).not.toContain("REDUNDANT_TOKENS");
+  });
+});
+
+describe("claim guards on the writer's own prose (review 2, finding 1)", () => {
+  const vctx = (l: Ledger, over = {}) => ({ ledger: l, patientText: "Tell me about Gold", neverEcho: ["4242"], loadedRulesText: "", linksAlreadySent: [], paymentSkillLoaded: true, ...over });
+  const check = (reply: string, extra: Record<string, unknown> = {}, over = {}) => {
+    const l = ledgerWithHeva();
+    l.addPolicyFacts(factsFor(loadDomain(), ["payment", "consultation"]));
+    const { out } = coerceWriterOutput(JSON.parse(writerJson({ reply, ...extra })));
+    const r = render(out!, l);
+    return [...r.violations, ...validate(out!, r.rendered, vctx(l, over))].filter((v) => v.severity === "hard").map((v) => v.code);
+  };
+
+  it.each([
+    ["Gold costs $25.", "UNSOURCED_QUANTITY"],
+    ["Gold includes flights.", "UNSOURCED_INCLUSION"],
+    ["Gold includes thirteen hotel nights.", "UNSOURCED_QUANTITY"],
+    ["Gold has a lifetime refund guarantee.", "UNSOURCED_POLICY"],
+    ["Gold gets you an airport pickup.", "UNSOURCED_INCLUSION"],
+    ["Gold is non-refundable.", "UNSOURCED_POLICY"],
+    ["The consultation is free.", "UNSOURCED_POLICY"],
+    ["Your deposit has been charged.", "FALSE_ACTION"],
+    ["I've booked your date with the clinic.", "FALSE_ACTION"],
+    ["I contacted Heva for you.", "FALSE_ACTION"],
+    ["I've saved Gold as your package.", "UNBACKED_PERSISTENCE"],
+    ["I'll check in with you next week.", "UNSCHEDULED_FOLLOW_UP"],
+  ])("rejects %j", (reply, code) => {
+    expect(check(reply)).toContain(code);
+  });
+
+  it("allows the same facts through tokens, and ordinary non-claims", () => {
+    expect(check("{{R:refund}}.")).toEqual([]);
+    expect(check("{{R:consultation}}. Feel free to ask anything else.")).toEqual([]);
+    expect(check("I can't guarantee a specific surgeon, and insurance doesn't cover hair transplants.")).toEqual([]);
+    expect(check("Heva Clinic works with 4C hair, and there's interest-free layaway for the balance.")).toEqual([]);
+    expect(check("Once the deposit is placed, the clinic confirms your date.")).toEqual([]);
+    expect(check("Which one would you like?")).toEqual([]);
+  });
+
+  it("a follow-up interval may be typed only when it is the interval being scheduled", () => {
+    const reply = "No rush. I'll check in after 2 weeks.";
+    expect(check(reply, { should_follow_up: true, follow_up_timing: "two weeks" })).toEqual([]);
+    expect(check(reply, { should_follow_up: true, follow_up_timing: "1 month" })).toContain("UNSOURCED_QUANTITY");
+  });
+
+  it("'noted' needs a write this turn (memory or a planned selection)", () => {
+    expect(check("Noted, you prefer texts.")).toContain("UNBACKED_PERSISTENCE");
+    expect(check("Noted, you prefer texts.", { memory: { communicationStyle: "casual" } })).toEqual([]);
+    expect(check("Noted, Heva it is.", {}, { selectionWritePlanned: true })).toEqual([]);
+  });
+
+  it("validates memory separately: no completed actions, promises only as scheduled check-ins, no card digits", () => {
+    expect(check("Okay.", { memory: { promisesMade: "I charged your card" } })).toEqual(expect.arrayContaining(["MEMORY_FALSE_ACTION", "MEMORY_PROMISE_UNSCHEDULED"]));
+    expect(check("Okay.", { memory: { promisesMade: "Send the payment link tomorrow" }, should_follow_up: true, follow_up_timing: "1 day" })).toContain("MEMORY_PROMISE_UNSUPPORTED");
+    expect(check("Okay.", { memory: { keyConcerns: "card ending 4242" } })).toContain("MEMORY_SENSITIVE");
+    expect(check("Okay.", { memory: { promisesMade: "Check in after 1 month if no reply" }, should_follow_up: true, follow_up_timing: "1 month" })).toEqual([]);
   });
 });

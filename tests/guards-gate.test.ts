@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { guardInput } from "../src/guards/input.js";
 import { gate } from "../src/policy/gate.js";
-import { Router, secondOpinionReasons } from "../src/decision/router.js";
-import { FakeAdapter } from "./helpers.js";
+import { Router, RouterFailure, secondOpinionReasons } from "../src/decision/router.js";
+import { LlmDecisionAdapter } from "../src/decision/llm.js";
+import { AdapterError, checkAnswers } from "../src/decision/adapter.js";
+import { buildQuestions } from "../src/decision/questions.js";
+import { buildContext } from "../src/context.js";
+import { loadDomain } from "../src/skills/loader.js";
+import { FakeAdapter, FakeLlm } from "./helpers.js";
 import { choice, decision, HEVA } from "./helpers.js";
 
 describe("input guards", () => {
@@ -153,5 +158,62 @@ describe("router merge rules (review finding 4)", () => {
   it("records scores as merged max values, not averages", async () => {
     const rr = await run({ needsHuman: 0.4 }, { needsHuman: 0.2 });
     expect(rr.merged.needsHuman).toEqual({ primary: 0.4, secondary: 0.2, merged: 0.4 });
+  });
+});
+
+describe("router output is validated at runtime (review 2, finding 2)", () => {
+  const qs = buildQuestions(loadDomain(), buildContext());
+  const input = { text: "I am having chest pain and trouble breathing.", state: {}, qs };
+  const full = () => {
+    const answers: Record<string, unknown> = {};
+    for (const [k, q] of Object.entries(qs.questions)) answers[k] = q.type === "noul" ? { p: 0.1 } : { choice: Object.keys(q.criteria)[0], confidence: 0.9 };
+    return answers;
+  };
+
+  it.each([
+    ["not JSON", "not JSON"],
+    ["a missing safety field", JSON.stringify({ answers: (({ medical_urgent, ...rest }) => rest)(full() as any) })],
+    ["a non-finite score", JSON.stringify({ answers: { ...full(), medical_urgent: { p: "high" } } })],
+    ["an out-of-range score", JSON.stringify({ answers: { ...full(), needs_human: { p: 7 } } })],
+    ["an invalid choice", JSON.stringify({ answers: { ...full(), unsupported_action: { choice: "teleport", confidence: 0.9 } } })],
+  ])("%s is an error (after one retry), carrying the billed usage", async (_name, text) => {
+    const llm = new FakeLlm([() => ({ text }), () => ({ text })]);
+    const err = await new LlmDecisionAdapter(llm).decide(input).catch((e) => e);
+    expect(err).toBeInstanceOf(AdapterError);
+    expect((err as any).usage).toMatchObject({ inputTokens: 200 });
+  });
+
+  it("a complete, valid answer set passes", () => {
+    const answers: Record<string, any> = {};
+    for (const [k, v] of Object.entries(full()) as [string, any][]) answers[k] = "p" in v ? { p: v.p } : { choice: v.choice, probabilities: { [v.choice]: v.confidence } };
+    expect(checkAnswers(answers, qs)).toEqual([]);
+  });
+
+  it("a malformed primary falls back to the second adapter; both malformed is a RouterFailure with usages", async () => {
+    const bad = () => new LlmDecisionAdapter(new FakeLlm([() => ({ text: "x" }), () => ({ text: "x" })]));
+    const ok = new FakeAdapter(decision({ medicalUrgent: 0.95 }));
+    const r = await new Router(bad(), ok).decide(input);
+    expect(r.fallbackUsed).toBe(true);
+    expect(r.decision.medicalUrgent).toBe(0.95);
+    const err = await new Router(bad(), bad()).decide(input).catch((e) => e);
+    expect(err).toBeInstanceOf(RouterFailure);
+    expect(err.usages.map((u: any) => u.stage)).toEqual(["router:llm:fake:failed-call", "router:llm:fake:failed-call"]);
+  });
+
+  it("counts a classifier retry on malformed output (reported as router retries)", async () => {
+    const answers: Record<string, unknown> = {};
+    for (const [k, q] of Object.entries(qs.questions)) answers[k] = q.type === "noul" ? { p: 0.1 } : { choice: Object.keys(q.criteria)[0], confidence: 0.9 };
+    const llm = new FakeLlm([() => ({ text: "oops" }), () => ({ text: JSON.stringify({ answers }) })]);
+    const r = await new Router(new LlmDecisionAdapter(llm)).decide(input);
+    expect(r.retries).toBe(1);
+    expect(r.usages[0].usage).toMatchObject({ inputTokens: 200 });
+  });
+
+  it("an uncertain escalation signal whose second opinion failed escalates (it is not read as 'no')", async () => {
+    const broken = { name: "broken", decide: async () => { throw new Error("down"); } };
+    const r = await new Router(new FakeAdapter(decision({ needsHuman: 0.45 })), broken as any).decide(input);
+    expect(r.unconfirmed).toEqual(["needsHuman"]);
+    expect(gate(decision({ needsHuman: 0.45 }), guardInput("hm"), [], "single", r.unconfirmed)).toMatchObject({ route: "handoff", category: "human" });
+    expect(gate(decision({ medicalUrgent: 0.5 }), guardInput("hm"), [], "single", ["medicalUrgent"])).toMatchObject({ route: "handoff", category: "medical" });
   });
 });

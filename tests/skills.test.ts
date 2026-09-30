@@ -71,3 +71,33 @@ describe("configuration (review finding 7)", () => {
     expect(getDefaultOptions({} as any)).toMatchObject({ writer: "deepseek", router: "auto", outputBattery: true });
   });
 });
+
+describe("policy facts are bound to their rules (review 2, finding 1)", () => {
+  const ruleText = (id: string) => {
+    const bodies = [domain.core.body, ...[...domain.skills.values()].map((s) => s.body)].join("\n");
+    const line = bodies.split("\n").find((l) => l.includes(`[${id}]`));
+    if (!line) return null;
+    // A rule includes its indented continuation lines.
+    const all = bodies.split("\n");
+    const i = all.indexOf(line);
+    const out = [line];
+    for (let j = i + 1; j < all.length && /^\s{2,}\S/.test(all[j]); j++) out.push(all[j]);
+    return out.join("\n");
+  };
+  it.each(domain.facts.map((f) => [f.id, f] as const))("%s: its rule exists, its skills exist, and every figure appears in that rule", (_id, f) => {
+    const text = ruleText(f.rule);
+    expect(text, `rule ${f.rule}`).not.toBeNull();
+    for (const s of f.skills) expect(s === "core" || domain.skills.has(s), s).toBe(true);
+    const figures = f.text.match(/\$?\d[\d,]*|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi) ?? [];
+    for (const fig of figures) expect(text!.toLowerCase(), `${f.id}: "${fig}" not in ${f.rule}`).toContain(fig.toLowerCase());
+  });
+  it("the writer sees the loaded facts as {{R:...}} tokens and nothing else", async () => {
+    const { Ledger } = await import("../src/evidence/ledger.js");
+    const { factsFor } = await import("../src/skills/loader.js");
+    const l = new Ledger();
+    l.addPolicyFacts(factsFor(domain, ["consultation"]));
+    expect(l.factsBlock()).toContain('{{R:consultation}} → "the consultation is free');
+    expect(l.factsBlock()).not.toContain("{{R:refund}}");
+    expect(l.factsBlock()).toContain("{{R:head-covering}}"); // core facts are always available
+  });
+});
