@@ -119,7 +119,7 @@ export function gate(
   // Clarify only when the answer depends on which clinic is meant (its packages, a selection, a
   // payment link). Policy questions (balance due, refunds) have the same answer for every clinic.
   const clinicSpecific =
-    (d.skills["clinic-packages"] ?? 0) >= t.skill || (d.skills["clinic-selection"] ?? 0) >= t.skill || d.paymentMode.choice === "link_request";
+    (d.skills["clinic-packages"] ?? 0) >= t.skill || (d.skills["clinic-selection"] ?? 0) >= t.skill || (d.paymentMode.choice === "link_request" && choiceP(d.paymentMode) >= t.act);
   if (d.clinicMentioned.choice === "ambiguous" && choiceP(d.clinicMentioned) >= t.act && d.clinicLean.choice === "none" && clinicSpecific) {
     fired.push("gate.clarify-ambiguous-clinic");
     const names = clinicNames.join(" or ");
