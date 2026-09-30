@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { guardInput } from "../src/guards/input.js";
-import { gate, isUncertain } from "../src/policy/gate.js";
+import { gate } from "../src/policy/gate.js";
+import { Router, secondOpinionReasons } from "../src/decision/router.js";
+import { FakeAdapter } from "./helpers.js";
 import { choice, decision, HEVA } from "./helpers.js";
 
 describe("input guards", () => {
@@ -74,8 +76,82 @@ describe("policy gate", () => {
     expect(r.route).toBe("clarify");
     expect(r.clarifyQuestion).toContain("Heva Clinic or Dr. Hakan Clinic");
   });
-  it("marks uncertain escalation signals for a second opinion", () => {
-    expect(isUncertain(decision({ needsHuman: 0.5 }))).toEqual(["needs_human"]);
-    expect(isUncertain(decision({ needsHuman: 0.1 }))).toEqual([]);
+  it("marks uncertain terminal signals and flagged actions for a second opinion", () => {
+    expect(secondOpinionReasons(decision({ needsHuman: 0.5 }))).toEqual(["uncertain:needsHuman"]);
+    expect(secondOpinionReasons(decision({ selfHarm: 0.4 }))).toEqual(["uncertain:selfHarm"]);
+    expect(secondOpinionReasons(decision({ unsupportedAction: choice("hold_date", 0.9) }))).toEqual(["confirm:unsupportedAction"]);
+    expect(secondOpinionReasons(decision({ needsHuman: 0.1 }))).toEqual([]);
+  });
+  it("a disagreement on an action does not escalate by itself", () => {
+    const r = gate(decision({ unsupportedAction: choice("other_offchannel", 0.95) }), g0, names, "disagree");
+    expect(r.route).toBe("answer");
+    expect(r.rulesFired).toContain("gate.action-disagreement-no-escalation");
+  });
+  it("an unconfirmable action escalates conservatively", () => {
+    expect(gate(decision({ unsupportedAction: choice("hold_date", 0.9) }), g0, names, "confirmation_unavailable").route).toBe("handoff");
+  });
+});
+
+describe("card redaction regressions (review finding 3)", () => {
+  it.each([
+    ["spaces", "please charge 4539 1488 0343 6467 now"],
+    ["hyphens", "please charge 4539-1488-0343-6467 now"],
+    ["dots", "card 4539.1488.0343.6467 thanks"],
+    ["no separators", "4539148803436467 is my card"],
+    ["non-breaking spaces", "charge 4539 1488 0343 6467"],
+    ["full-width digits", "card ４５３９ １４８８ ０３４３ ６４６７"],
+    ["amex grouping", "Amex 3782 822463 10005 please"],
+  ])("removes every digit of a formatted card number: %s", (_label, msg) => {
+    const g = guardInput(msg);
+    expect(g.cardDataPresent).toBe(true);
+    expect(g.redacted.replace(/\D/g, "")).toBe("");
+  });
+  it("redacts a non-Luhn long number when card words are nearby", () => {
+    const g = guardInput("my visa is 4539 1488 0343 6468");
+    expect(g.redacted).not.toMatch(/4539|6468/);
+  });
+  it("keeps prices, dates, phone-free text and graft counts intact", () => {
+    for (const msg of ["Gold is $4,500 for 2800 grafts", "can I come March 12 2027?", "my budget is 3000 to 4500"]) {
+      const g = guardInput(msg);
+      expect(g.cardDataPresent).toBe(false);
+      expect(g.redacted).toBe(g.text);
+    }
+  });
+  it("scans the full message: a human request after 2,000 characters still fast-paths (finding 5)", () => {
+    const g = guardInput("a".repeat(2100) + ". I want to talk to a human.");
+    expect(g.humanFastPath).toBe(true);
+    expect(g.chars).toBeGreaterThan(2000);
+  });
+  it("a negation in one sentence does not hide a request in another", () => {
+    expect(guardInput("I don't need a discount. Just let me talk to a real person.").humanFastPath).toBe(true);
+  });
+});
+
+describe("router merge rules (review finding 4)", () => {
+  const qs = { questions: {}, optionIds: {} };
+  const run = (p: Partial<ReturnType<typeof decision>>, s: Partial<ReturnType<typeof decision>> | "throws") =>
+    new Router(
+      new FakeAdapter(decision(p)),
+      s === "throws" ? ({ name: "down", decide: async () => { throw new Error("down"); } } as any) : new FakeAdapter(decision(s)),
+    ).decide({ text: "x", state: {}, qs });
+
+  it("human signal: primary 0.35 + secondary 0.80 escalates (max, not average)", async () => {
+    const rr = await run({ needsHuman: 0.35 }, { needsHuman: 0.8 });
+    expect(rr.decision.needsHuman).toBe(0.8);
+    expect(gate(rr.decision, guardInput("x"), [], rr.actionConsensus).category).toBe("human");
+  });
+  it("applies max to every terminal signal whenever the second adapter runs, even if called for a different field", async () => {
+    const rr = await run({ unsupportedAction: choice("hold_date", 0.9) }, { selfHarm: 0.9, medicalUrgent: 0.1 });
+    expect(rr.decision.selfHarm).toBe(0.9);
+    expect(gate(rr.decision, guardInput("x"), [], rr.actionConsensus).category).toBe("medical");
+  });
+  it("action agree / disagree / confirmation unavailable", async () => {
+    expect((await run({ unsupportedAction: choice("hold_date", 0.9) }, { unsupportedAction: choice("contact_clinic", 0.7) })).actionConsensus).toBe("agree");
+    expect((await run({ unsupportedAction: choice("hold_date", 0.9) }, { unsupportedAction: choice("none", 0.95) })).actionConsensus).toBe("disagree");
+    expect((await run({ unsupportedAction: choice("hold_date", 0.9) }, "throws")).actionConsensus).toBe("confirmation_unavailable");
+  });
+  it("records scores as merged max values, not averages", async () => {
+    const rr = await run({ needsHuman: 0.4 }, { needsHuman: 0.2 });
+    expect(rr.merged.needsHuman).toEqual({ primary: 0.4, secondary: 0.2, merged: 0.4 });
   });
 });

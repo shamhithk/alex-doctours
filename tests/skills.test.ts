@@ -63,3 +63,11 @@ describe("skill selection", () => {
     for (const s of pause.suppresses) expect(sel.ids).not.toContain(s);
   });
 });
+
+describe("configuration (review finding 7)", () => {
+  it("reads defaults at call time, so values loaded from .env apply", async () => {
+    const { getDefaultOptions } = await import("../src/deps.js");
+    expect(getDefaultOptions({ WRITER_MODEL: "gemini", ROUTER: "llm-only", OUTPUT_BATTERY: "0" } as any)).toMatchObject({ writer: "gemini", router: "llm-only", outputBattery: false });
+    expect(getDefaultOptions({} as any)).toMatchObject({ writer: "deepseek", router: "auto", outputBattery: true });
+  });
+});

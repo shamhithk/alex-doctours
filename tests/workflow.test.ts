@@ -5,7 +5,7 @@ import { loadDomain } from "../src/skills/loader.js";
 import { Router } from "../src/decision/router.js";
 import { mapLimit } from "../src/util.js";
 import { ReplySchema } from "../src/contracts.js";
-import { choice, decision, FakeAdapter, FakeLlm, HAKAN, HEVA, writerJson } from "./helpers.js";
+import { choice, decision, FakeAdapter, FakeLlm, HAKAN, HEVA, tok, writerJson } from "./helpers.js";
 
 const ctx = buildContext();
 const domain = loadDomain();
@@ -49,12 +49,10 @@ describe("workflow: answer path", () => {
   it("renders facts from tools, links last, commits the clinic lean after validation", async () => {
     const llm = new FakeLlm([
       (req) => {
-        const facts = req.system.split("# FACTS")[1];
-        const id = (label: string) => facts.match(new RegExp(`(F\\d+): ${label}`))![1];
         const link = req.system.split("# LINKS")[1].match(/(L\d+): Patient's personal assessment/)![1];
         return {
           text: writerJson({
-            reply: `Heva specializes in Afro hair. Heva has two packages: Silver is {{${id("Heva Clinic · Silver · price")}}} with a {{${id("Heva Clinic · Silver · deposit")}}} deposit. You can pay from your assessment using the link below.`,
+            reply: `${tok(req.system, "Heva Clinic", "specialty")}. ${tok(req.system, "Heva Clinic", "packages")}. ${tok(req.system, "Silver", "price+deposit")}. You can pay from your assessment using the link below.`,
             link_ids: [link],
             claims: [{ text: "afro", sources: ["core"] }],
             intent: "answer Heva packages",
@@ -72,7 +70,7 @@ describe("workflow: answer path", () => {
     const { reply, trace } = await respond({ id: "a", text: "I'm leaning toward Heva, what packages and can I pay from the assessment?" }, deps(d, llm));
     expect(ReplySchema.safeParse(reply).success).toBe(true);
     expect(reply.escalate).toBe(false);
-    expect(reply.response).toContain("Silver is $3,000 USD with a $500 deposit.");
+    expect(reply.response).toContain("Heva Clinic specializes in Afro hair. Heva Clinic has two packages: Silver and Gold. Silver is $3,000 USD with a $500 deposit.");
     expect(reply.response.split("\n").at(-1)).toBe("https://www.doctours.com/assessment/c3d4e5f6-3333-4333-8333-333333333333");
     expect(reply.highEngagement).toBe(true);
     expect(trace.commits).toEqual([expect.objectContaining({ tool: "updateUserClinicPreferences", ok: true })]);
@@ -85,14 +83,13 @@ describe("workflow: answer path", () => {
       () => ({ text: writerJson({ reply: "Sapphire is $3,200." }) }),
       (req) => {
         const last = req.messages.at(-1) as { content: string };
-        expect(last.content).toMatch(/UNSOURCED_MONEY/);
-        const f = req.system.split("# FACTS")[1].match(/(F\d+): Dr\. Hakan Clinic · Sapphire · price/)![1];
-        return { text: writerJson({ reply: `Dr. Hakan Clinic has one package, Sapphire, at {{${f}}}.` }) };
+        expect(last.content).toMatch(/UNSOURCED_QUANTITY/);
+        return { text: writerJson({ reply: `${tok(req.system, "Dr. Hakan Clinic", "package-count")}. ${tok(req.system, "Sapphire", "price")}.` }) };
       },
     ]);
     const d = decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) });
     const { reply, trace } = await respond({ id: "r", text: "What does Dr. Hakan Clinic cost?" }, deps(d, llm));
-    expect(reply.response).toBe("Dr. Hakan Clinic has one package, Sapphire, at $3,200 USD.");
+    expect(reply.response).toBe("Dr. Hakan Clinic has one package. Sapphire is $3,200 USD.");
     expect(trace.writer?.outcome).toBe("repaired");
   });
 
@@ -131,7 +128,7 @@ describe("workflow: tool calling", () => {
       }),
       () => ({ text: "READY" }),
       (req) => {
-        expect(req.system).toMatch(/Dr\. Hakan \(Hair transplant surgeon\)/);
+        expect(req.system).toContain("Dr. Hakan is the hair transplant surgeon at Dr. Hakan Clinic");
         return { text: writerJson({ reply: "Dr. Hakan Clinic's surgeon is Dr. Hakan, a hair transplant surgeon." }) };
       },
     ]);
@@ -165,9 +162,7 @@ describe("writer provider failover", () => {
     const broken = new FakeLlm([]); // throws on first call
     const backup = new FakeLlm([
       (req) => {
-        const f = req.system.split("# FACTS")[1].match(/(F\d+): Dr\. Hakan Clinic · Sapphire · price/)![1];
-        const dep = req.system.split("# FACTS")[1].match(/(F\d+): Dr\. Hakan Clinic · Sapphire · deposit/)![1];
-        return { text: writerJson({ reply: `Dr. Hakan Clinic has one package, Sapphire, at {{${f}}} with a {{${dep}}} deposit.` }) };
+        return { text: writerJson({ reply: `${tok(req.system, "Dr. Hakan Clinic", "package-count")}. ${tok(req.system, "Sapphire", "price+deposit")}.` }) };
       },
     ]);
     const d = decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) });
@@ -175,5 +170,108 @@ describe("writer provider failover", () => {
     expect(reply.escalate).toBe(false);
     expect(reply.response).toContain("$3,200 USD with a $500 deposit");
     expect(trace.writer?.providerFailover).toMatch(/failed/);
+  });
+});
+
+describe("trace hygiene", () => {
+  it("masks patient contact details but keeps canonical ids", async () => {
+    const { maskPII } = await import("../src/workflow.js");
+    const s = maskPII('{"email":"jordan.hale@example.invalid","phone":"+15555550123","id":"44444444-4444-4444-8444-444444444441"}');
+    expect(s).not.toContain("jordan.hale@");
+    expect(s).not.toContain("5555550123");
+    expect(s).toContain("44444444-4444-4444-8444-444444444441");
+  });
+  it("records a step timeline and tool timings", async () => {
+    const llm = new FakeLlm([(req) => {
+      return { text: writerJson({ reply: `${tok(req.system, "Dr. Hakan Clinic", "package-count")}. ${tok(req.system, "Sapphire", "price")}.` }) };
+    }]);
+    const { trace } = await respond({ id: "tl", text: "What does Dr. Hakan Clinic cost?" }, deps(decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) }), llm));
+    expect(trace.timeline.map((t) => t.step)).toEqual(expect.arrayContaining(["guards", "router", "gate", "skills", "evidence", "writer", "commit"]));
+    expect(trace.tools.every((t) => typeof t.at === "number")).toBe(true);
+    expect(trace.prompt?.system).toContain("# FACTS");
+  });
+});
+
+describe("long inputs (review finding 5)", () => {
+  it("routes every chunk: a paraphrased human request in the middle of a long message escalates", async () => {
+    const filler = "I have been reading a lot about hair transplants and comparing notes with friends. ".repeat(180);
+    const text = filler + "Could somebody from your staff take over this conversation for me. " + filler;
+    expect(text.length).toBeGreaterThan(24_000);
+    const perChunk = { name: "chunky", calls: 0, decide: async (inp: { text: string }) => { perChunk.calls++; return decision({ needsHuman: /staff take over/.test(inp.text) ? 0.9 : 0.02 }); } };
+    const { reply, trace } = await respond({ id: "long", text }, { ctx, domain, router: new Router(perChunk as any), writer: new FakeLlm([]) });
+    expect(perChunk.calls).toBeGreaterThan(1);
+    expect(trace.router?.chunks).toBe(perChunk.calls);
+    expect(reply.escalate).toBe(true);
+  });
+  it("messages over the hard limit get a deliberate handoff, not silent truncation", async () => {
+    const { reply, trace } = await respond({ id: "huge", text: "x ".repeat(30_000) }, { ctx, domain, router: new Router(new FakeAdapter(decision())), writer: new FakeLlm([]) });
+    expect(reply.escalate).toBe(true);
+    expect(trace.category).toBe("oversized_input");
+  });
+});
+
+describe("rejected-draft isolation and request-specific fallback (review finding 2 + extras)", () => {
+  const badDraft = () => ({
+    text: writerJson({
+      reply: "Sapphire is $3,100 and I charged your card.",
+      should_follow_up: true,
+      follow_up_timing: "tomorrow",
+      memory: { keyConcerns: null, promisesMade: "I charged your card", preferredPaymentMethod: null, communicationStyle: null, procedureArea: null },
+      claims: [{ text: "bogus", sources: ["F1"] }],
+    }),
+  });
+  it("discards the rejected draft's memory, follow-up and claims; commits nothing from it", async () => {
+    const d = decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) });
+    const { reply, trace } = await respond({ id: "iso", text: "What does Dr. Hakan Clinic cost?" }, deps(d, new FakeLlm([badDraft, badDraft])));
+    expect(trace.writer?.outcome).toBe("fallback");
+    expect(reply.response).toBe("Sapphire is $3,200 USD with a $500 deposit.");
+    expect(reply.shouldFollowUp).toBe(false);
+    expect(reply.followUpTiming).toBeNull();
+    expect(reply.workingMemoryUpdates).toBeNull();
+    expect(JSON.stringify(trace.commits ?? [])).not.toContain("charged");
+    expect(JSON.stringify(trace.writer?.claims)).not.toContain("F1");
+  });
+  it("answers the question actually asked: inclusions, not a price catalogue", async () => {
+    const d = decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HEVA) });
+    const { reply } = await respond({ id: "inc", text: "What does the Gold package include?" }, deps(d, new FakeLlm([badDraft, badDraft])));
+    expect(reply.response).toBe("Gold includes 4 hotel nights.");
+    expect(reply.response).not.toMatch(/\$/);
+  });
+  it("a missing detail is stated plainly, with no promise of a later lookup", async () => {
+    const d = decision({ skills: { travel: 0.9 } });
+    const { reply } = await respond({ id: "miss", text: "What's the weather like in Istanbul in March?" }, deps(d, new FakeLlm([badDraft, badDraft])));
+    expect(reply.escalate).toBe(false);
+    expect(reply.response).toBe("I don't have that exact detail.");
+  });
+  it("if any adapter flagged an action, a failed draft becomes a handoff, not a 'missing detail'", async () => {
+    const d = decision({ skills: { "clinic-packages": 0.9 }, unsupportedAction: choice("hold_date", 0.45) });
+    const { reply, trace } = await respond({ id: "act", text: "can you keep march 12 for me at heva" }, deps(d, new FakeLlm([badDraft, badDraft])));
+    expect(reply.escalate).toBe(true);
+    expect(trace.rulesFired).toContain("fallback.action-request-handoff");
+  });
+});
+
+describe("cost accounting by stage (review finding 6)", () => {
+  const okDraft = (req: any) => ({ text: writerJson({ reply: `${tok(req.system, "Sapphire", "price+deposit")}.` }) });
+  it("includes routing cost (LLM classifier and Jev estimate), not just the writer", async () => {
+    const llmRouter = { name: "llm", decide: async () => ({ ...decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) }), raw: { usage: { inputTokens: 1000, outputTokens: 50, costUsd: 0.5 } } }) };
+    const { trace } = await respond({ id: "c1", text: "What does Dr. Hakan Clinic cost?" }, { ctx, domain, router: new Router(llmRouter as any), writer: new FakeLlm([okDraft]) });
+    expect(trace.usageByStage.map((s) => s.stage)).toEqual(expect.arrayContaining(["router:llm", "writer:fake:draft"]));
+    expect(trace.usage.costUsd).toBeCloseTo(0.5, 5);
+    expect(trace.usage.costComplete).toBe(true);
+
+    const jevRouter = { name: "jev", decide: async () => ({ ...decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) }), raw: { usage: { input_tokens: 1_000_000, output_tokens: 20 } } }) };
+    const j = await respond({ id: "c2", text: "What does Dr. Hakan Clinic cost?" }, { ctx, domain, router: new Router(jevRouter as any), writer: new FakeLlm([okDraft]) });
+    expect(j.trace.usage.costUsd).toBeCloseTo(0.042, 5);
+    expect(j.trace.usage.costEstimated).toBe(true);
+  });
+  it("keeps completed calls before a failover and marks the failed call's cost unknown", async () => {
+    const primary = new FakeLlm([]); // throws on the first call
+    const { trace } = await respond(
+      { id: "c3", text: "What does Dr. Hakan Clinic cost?" },
+      { ...deps(decision({ skills: { "clinic-packages": 0.9 }, clinicMentioned: choice(HAKAN) }), primary), writerFallback: new FakeLlm([okDraft]) },
+    );
+    expect(trace.usageByStage.some((s) => s.stage.endsWith("failed-call") && s.costUsd === null)).toBe(true);
+    expect(trace.usage.costComplete).toBe(false);
   });
 });

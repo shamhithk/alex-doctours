@@ -80,3 +80,11 @@ export const writerJson = (over: Record<string, unknown>) =>
     unsupported: null,
     ...over,
   });
+
+/** Find an entity ref in the writer prompt's FACTS block and build a clause token for it. */
+export function tok(system: string, name: string, kind: string): string {
+  const facts = system.split("# FACTS")[1] ?? "";
+  const m = facts.match(new RegExp(`^([A-Z]{1,3}\\d*) = (?:package|clinic) "${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`, "m"));
+  if (!m) throw new Error(`no entity "${name}" in FACTS`);
+  return `{{${m[1]}:${kind}}}`;
+}

@@ -58,32 +58,43 @@ function ledgerWithHeva() {
   l.ingest(ex.run("getLatestAssessment", {}, "code"));
   return l;
 }
+const refOf = (l: Ledger, name: string) => l.allEntities().find((e) => e.kind === "package" && e.name === name)!.ref;
 
-describe("evidence ledger", () => {
-  it("turns package results into attributed facts with exact rendering", () => {
+describe("evidence ledger (typed entities + clause tokens)", () => {
+  it("renders entity name and value together from one record", () => {
     const l = ledgerWithHeva();
-    const silver = l.facts.find((f) => f.key === "package.basePrice" && f.entity.packageName === "Silver")!;
-    const gold = l.facts.find((f) => f.key === "package.depositAmount" && f.entity.packageName === "Gold")!;
-    expect(silver.render).toBe("$3,000 USD");
-    expect(gold.render).toBe("$600");
-    expect(l.facts.find((f) => f.key === "clinic.flag.Speciality")?.render).toBe("Afro Hair");
+    const silver = refOf(l, "Silver");
+    const gold = refOf(l, "Gold");
+    expect(l.renderClause(silver, "price+deposit")).toBe("Silver is $3,000 USD with a $500 deposit");
+    expect(l.renderClause(gold, "inclusions")).toBe("Gold includes 4 hotel nights");
+    expect(l.renderClause(gold, "note")).toBe("on Gold, the doctor makes every incision and extracts every graft");
+    const heva = l.refFor(HEVA)!;
+    expect(l.renderClause(heva, "specialty")).toBe("Heva Clinic specializes in Afro hair");
+    expect(l.renderClause(heva, "packages")).toBe("Heva Clinic has two packages: Silver and Gold");
+    expect(l.renderClause("AS", "graft-range")).toBe("your assessment estimates 2,500 to 3,200 grafts");
     expect(l.links.map((x) => x.url)).toContain("https://www.doctours.com/assessment/c3d4e5f6-3333-4333-8333-333333333333");
   });
-  it("records a null tool result as 'no data', never as a fact", () => {
+  it("records a null tool result as 'no data', never as an entity", () => {
     const ex = new ToolExecutor(USER);
     const l = new Ledger();
     l.ingest(ex.run("getClinicPackages", { clinicName: "Nonexistent Clinic" }, "model"));
-    expect(l.facts).toHaveLength(0);
+    expect(l.allEntities()).toHaveLength(0);
     expect(l.notes[0]).toMatch(/no data/);
+  });
+  it("renders doctors for a clinic", () => {
+    const ex = new ToolExecutor(USER);
+    const l = new Ledger();
+    l.ingest(ex.run("getClinicDoctors", { clinicId: HAKAN }, "code"));
+    expect(l.renderClause(l.refFor(HAKAN)!, "doctors")).toBe("Dr. Hakan is the hair transplant surgeon at Dr. Hakan Clinic");
   });
 });
 
 describe("render + validate", () => {
   const vctx = (l: Ledger, over = {}) => ({
     ledger: l,
-    patientText: "What packages does Heva have?",
+    patientText: "What packages does Heva have? You quoted me $100 for Gold.",
     neverEcho: ["4242"],
-    loadedRulesText: "refundable less a $25 cancellation fee",
+    loadedRulesText: "- [payment.refund] The deposit is refundable less a $25 cancellation fee. Clinics confirm within 24 hours.",
     linksAlreadySent: [],
     paymentSkillLoaded: true,
     ...over,
@@ -93,37 +104,48 @@ describe("render + validate", () => {
     const r = render(out!, l);
     return { r: r.rendered, v: [...r.violations, ...validate(out!, r.rendered, vctx(l, over))] };
   };
-  const ids = (l: Ledger) => ({
-    sp: l.facts.find((f) => f.key === "package.basePrice" && f.entity.packageName === "Silver")!.id,
-    sd: l.facts.find((f) => f.key === "package.depositAmount" && f.entity.packageName === "Silver")!.id,
-    gp: l.facts.find((f) => f.key === "package.basePrice" && f.entity.packageName === "Gold")!.id,
-    link: l.links[0].id,
-  });
+  const codes = (v: { code: string }[]) => v.map((x) => x.code);
 
-  it("renders tokens exactly and puts links on the last line", () => {
+  it("renders clause tokens exactly, capitalises at sentence start, and puts links last", () => {
     const l = ledgerWithHeva();
-    const { sp, sd, link } = ids(l);
-    const { r, v } = run(l, writerJson({ reply: `Silver is {{${sp}}} with a {{${sd}}} deposit. You can pay using the link below.`, link_ids: [link] }));
+    const { r, v } = run(l, writerJson({ reply: `{{${l.refFor(HEVA)}:packages}}. {{${refOf(l, "Silver")}:price+deposit}}. You can pay using the link below.`, link_ids: ["L1"] }));
     expect(hard(v)).toEqual([]);
+    expect(r.text).toContain("Heva Clinic has two packages: Silver and Gold. Silver is $3,000 USD with a $500 deposit.");
     expect(r.text.split("\n").at(-1)).toBe("https://www.doctours.com/assessment/c3d4e5f6-3333-4333-8333-333333333333");
-    expect(r.text).toContain("Silver is $3,000 USD with a $500 deposit.");
   });
-  it("catches cross-package attribution (Gold's price next to Silver)", () => {
+  // Review finding 1: each of these was previously accepted.
+  it.each([
+    ["typed swapped prices", "Silver costs $4,500 USD and Gold costs $3,000 USD."],
+    ["invented inclusion", "Gold includes 20 hotel nights."],
+    ["price without a dollar sign", "Gold costs 100 USD."],
+    ["patient-quoted number is not authority", "Yes, Gold is $100 as you were quoted."],
+    ["invented package count", "Heva has 3 packages."],
+    ["invented percentage", "Gold saves you 10% overall."],
+  ])("rejects %s", (_label, reply) => {
     const l = ledgerWithHeva();
-    const { gp } = ids(l);
-    const { v } = run(l, writerJson({ reply: `Silver is {{${gp}}}.` }));
-    expect(v.map((x) => x.code)).toContain("ATTRIBUTION");
+    expect(codes(run(l, writerJson({ reply })).v)).toContain("UNSOURCED_QUANTITY");
   });
-  it("rejects typed dollar amounts, typed URLs and unknown ids", () => {
+  it("swapping is structurally impossible: a token always carries its own package name", () => {
     const l = ledgerWithHeva();
-    const { v } = run(l, writerJson({ reply: "Silver is $2,999 at https://evil.example.com/pay", link_ids: ["L99"] }));
-    const codes = v.map((x) => x.code);
-    expect(codes).toEqual(expect.arrayContaining(["UNSOURCED_MONEY", "URL_IN_TEXT", "UNKNOWN_LINK"]));
+    const { r } = run(l, writerJson({ reply: `Silver: {{${refOf(l, "Gold")}:price}}.` }));
+    expect(r.text).toBe("Silver: Gold is $4,500 USD.");
   });
-  it("allows a dollar figure stated verbatim in a loaded rule", () => {
+  it("allows figures stated verbatim in a loaded rule", () => {
     const l = ledgerWithHeva();
-    const { v } = run(l, writerJson({ reply: "The deposit is refundable less a $25 cancellation fee until your lock-in date." }));
-    expect(v.map((x) => x.code)).not.toContain("UNSOURCED_MONEY");
+    const { v } = run(l, writerJson({ reply: "The deposit is refundable less a $25 cancellation fee, and the clinic confirms within 24 hours." }));
+    expect(codes(v)).not.toContain("UNSOURCED_QUANTITY");
+  });
+  it("rejects unknown clause tokens, typed URLs and unknown link ids", () => {
+    const l = ledgerWithHeva();
+    const { v } = run(l, writerJson({ reply: "{{P9:price}} at https://evil.example.com/pay", link_ids: ["L99"] }));
+    expect(codes(v)).toEqual(expect.arrayContaining(["UNKNOWN_FACT", "URL_IN_TEXT", "UNKNOWN_LINK"]));
+  });
+  it("flags claim sources that do not exist (soft)", () => {
+    const l = ledgerWithHeva();
+    const { v } = run(l, writerJson({ reply: "Heva works with 4C hair.", claims: [{ text: "x", sources: ["F99", "payment.refund"] }] }));
+    const bad = v.filter((x) => x.code === "UNKNOWN_CLAIM_SOURCE");
+    expect(bad).toHaveLength(1);
+    expect(bad[0].severity).toBe("soft");
   });
   it.each([
     ["I'll send you the driver details soon.", "OFF_CHANNEL"],
@@ -131,12 +153,12 @@ describe("render + validate", () => {
     ["Someone from our team will reach out.", "OFF_CHANNEL"],
     ["Bring a loose hat for after the procedure.", "HEAD_COVERING"],
     ["Your assessment will be ready within 24 hours.", "ASSESSMENT_TURNAROUND"],
-    ["With Klarna that's about $400/month at 0% APR.", "FINANCING_MATH"],
+    ["With Klarna the monthly amount is lower at 0% APR.", "FINANCING_MATH"],
     ["Your card ending 4242 is noted.", "ECHOED_SENSITIVE"],
+    ["Your card ending 4 2 4 2 is noted.", "ECHOED_SENSITIVE"],
   ])("lints %s", (reply, code) => {
     const l = ledgerWithHeva();
-    const { v } = run(l, writerJson({ reply }));
-    expect(v.map((x) => x.code)).toContain(code);
+    expect(codes(run(l, writerJson({ reply })).v)).toContain(code);
   });
   it("allows the dated pause check-in", () => {
     const l = ledgerWithHeva();
@@ -147,7 +169,33 @@ describe("render + validate", () => {
     const ex = new ToolExecutor(USER);
     const l = new Ledger();
     l.ingest(ex.run("getPatientImages", {}, "code"));
-    const { r } = run(l, writerJson({ reply: "Here are your photos.", attachment_ids: ["A1", "A2", "A3", "A4", "A5"] }));
+    const { r } = run(l, writerJson({ reply: "Here are your photos.", attachment_ids: ["IMG1", "IMG2", "IMG3", "IMG4", "IMG5"] }));
     expect(r.attachments).toHaveLength(3);
+  });
+});
+
+describe("redundant clause tokens", () => {
+  const vctx = (l: Ledger) => ({ ledger: l, patientText: "x", neverEcho: [], loadedRulesText: "", linksAlreadySent: [], paymentSkillLoaded: false });
+  const codes = (l: Ledger, reply: string) => {
+    const { out } = coerceWriterOutput(JSON.parse(writerJson({ reply })));
+    const r = render(out!, l);
+    return validate(out!, r.rendered, vctx(l)).map((x) => x.code);
+  };
+  it.each([
+    ["count + list", (c: string) => `{{${c}:package-count}}: {{${c}:packages}}.`],
+    ["list as a lead-in to prices", (c: string, p: string) => `{{${c}:packages}}: {{${p}:price+deposit}}.`],
+    ["same token twice", (_c: string, p: string) => `{{${p}:price}}. Again, {{${p}:price}}.`],
+    ["price with price+deposit", (_c: string, p: string) => `{{${p}:price}}, and {{${p}:price+deposit}}.`],
+  ])("flags %s", (_label, build) => {
+    const l = ledgerWithHeva();
+    const c = l.refFor(HEVA)!;
+    const p = l.allEntities().find((e) => e.kind === "package")!.ref;
+    expect(codes(l, build(c, p))).toContain("REDUNDANT_TOKENS");
+  });
+  it("accepts the recommended price-list shape", () => {
+    const l = ledgerWithHeva();
+    const c = l.refFor(HEVA)!;
+    const [p1, p2] = l.allEntities().filter((e) => e.kind === "package").map((e) => e.ref);
+    expect(codes(l, `{{${c}:package-count}}: {{${p1}:price+deposit}}, and {{${p2}:price+deposit}}.`)).not.toContain("REDUNDANT_TOKENS");
   });
 });
