@@ -1,0 +1,105 @@
+{
+  "writer": "deepseek",
+  "router": "jev (+llm:deepseek)",
+  "k": 3,
+  "cases": 43,
+  "runs": 129,
+  "passRate": "79.8%",
+  "passK": "32/43",
+  "passAny": "36/43",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "93.3%",
+  "falseEscalations": 3,
+  "nonEscalationCases": 29,
+  "writerOutcomes": {
+    "ok": 59,
+    "fallback": 8,
+    "repaired": 14,
+    "none": 3
+  },
+  "promptTokensP50": 8305,
+  "latencyP50ms": 2510,
+  "latencyP95ms": 8231,
+  "costTotalUsd": 0.13808,
+  "costPerAnsweredUsd": 0.00129,
+  "costPerInputUsd": 0.00107,
+  "costPerSuccessfulAnswerUsd": 0.00226,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 0.2,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 4,
+    "leaves_question_unanswered": 9,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 3,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "haltReason": null,
+  "reliability": {
+    "firstDraftAcceptRate": "72.8%",
+    "repairRate": "17.3%",
+    "fallbackRate": "9.9%",
+    "falseEscalations": {
+      "runs": 3,
+      "cases": [
+        "h2-ans-revision-timing"
+      ]
+    },
+    "missedEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "routerRetries": 0,
+    "routerFallbacks": 0,
+    "routerFailures": 0,
+    "secondOpinionRate": "23.3%",
+    "unconfirmedEscalations": 0,
+    "guardViolations": {
+      "UNSOURCED_INCLUSION": 10,
+      "WRITER_JSON": 2,
+      "UNSOURCED_QUANTITY": 9,
+      "UNSOURCED_POLICY": 1,
+      "FALSE_ACTION": 9,
+      "REDUNDANT_TOKENS": 2,
+      "UNBACKED_PERSISTENCE": 7,
+      "OFF_CHANNEL": 2,
+      "MEMORY_PROMISE_UNSCHEDULED": 3
+    }
+  },
+  "costByStage": {
+    "router:jev": {
+      "calls": 120,
+      "costUsd": 0.018345,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "router:llm:deepseek": {
+      "calls": 30,
+      "costUsd": 0.020767,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "writer:deepseek:draft": {
+      "calls": 84,
+      "costUsd": 0.079752,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "output-battery": {
+      "calls": 81,
+      "costUsd": 0.001673,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "writer:deepseek:repair": {
+      "calls": 25,
+      "costUsd": 0.017561,
+      "unknownCalls": 0,
+      "estimated": false
+    }
+  },
+  "wallMs": 207989
+}

@@ -1,0 +1,99 @@
+{
+  "writer": "gemini",
+  "router": "jev (+llm:deepseek)",
+  "k": 3,
+  "cases": 43,
+  "runs": 129,
+  "passRate": "86.0%",
+  "passK": "37/43",
+  "passAny": "37/43",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "93.3%",
+  "falseEscalations": 3,
+  "nonEscalationCases": 29,
+  "writerOutcomes": {
+    "ok": 79,
+    "none": 3,
+    "repaired": 2
+  },
+  "promptTokensP50": 8372,
+  "latencyP50ms": 1910,
+  "latencyP95ms": 4157,
+  "costTotalUsd": 0.54655,
+  "costPerAnsweredUsd": 0.00585,
+  "costPerInputUsd": 0.00424,
+  "costPerSuccessfulAnswerUsd": 0.00792,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 0.75,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 4,
+    "leaves_question_unanswered": 3,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 3,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "haltReason": null,
+  "reliability": {
+    "firstDraftAcceptRate": "97.5%",
+    "repairRate": "2.5%",
+    "fallbackRate": "0.0%",
+    "falseEscalations": {
+      "runs": 3,
+      "cases": [
+        "h2-ans-revision-timing"
+      ]
+    },
+    "missedEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "routerRetries": 0,
+    "routerFallbacks": 0,
+    "routerFailures": 0,
+    "secondOpinionRate": "23.3%",
+    "unconfirmedEscalations": 0,
+    "guardViolations": {
+      "FALSE_ACTION": 1,
+      "REDUNDANT_TOKENS": 1,
+      "MEMORY_PROMISE_UNSCHEDULED": 3,
+      "UNBACKED_PERSISTENCE": 3
+    }
+  },
+  "costByStage": {
+    "router:jev": {
+      "calls": 120,
+      "costUsd": 0.018345,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "router:llm:deepseek": {
+      "calls": 30,
+      "costUsd": 0.019641,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "writer:gemini:draft": {
+      "calls": 84,
+      "costUsd": 0.475615,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "output-battery": {
+      "calls": 81,
+      "costUsd": 0.001645,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "writer:gemini:repair": {
+      "calls": 5,
+      "costUsd": 0.031333,
+      "unknownCalls": 0,
+      "estimated": false
+    }
+  },
+  "wallMs": 127985
+}

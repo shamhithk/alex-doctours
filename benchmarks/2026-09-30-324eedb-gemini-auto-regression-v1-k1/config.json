@@ -1,0 +1,52 @@
+{
+  "commit": "324eedb",
+  "dirtyWorkingTree": false,
+  "codeHash": "6bdad60071a2dce87a3352a281e711103eab79d960e9c49684493e04bc6f9f1b",
+  "date": "2026-09-30T05:58:41.446Z",
+  "set": "regression-v1",
+  "k": 1,
+  "writer": {
+    "key": "gemini",
+    "provider": "gemini",
+    "model": "gemini-3.8-flash",
+    "reasoning": "low",
+    "json": "schema",
+    "price": {
+      "input": 0.75,
+      "output": 3.75,
+      "cachedInput": 0.075
+    }
+  },
+  "router": "jev (+llm:deepseek)",
+  "classifier": "deepseek",
+  "thresholds": {
+    "act": 0.6,
+    "uncertainLow": 0.35,
+    "skill": 0.6,
+    "policyOverride": 0.7
+  },
+  "skills": {
+    "assessment": 1,
+    "call-context": 1,
+    "clinic-packages": 2,
+    "clinic-selection": 1,
+    "consultation": 3,
+    "creator": 1,
+    "financing": 1,
+    "general-faq": 1,
+    "images": 1,
+    "insurance-carecredit": 1,
+    "intake-collection": 1,
+    "pause": 1,
+    "payment": 2,
+    "promo-discount": 1,
+    "reversibility": 2,
+    "travel": 1,
+    "what-matters": 1
+  },
+  "spendCapUsd": 0.25,
+  "concurrency": 2,
+  "minCaseReserveUsd": 0.01,
+  "writerFailover": false,
+  "node": "v22.23.1"
+}
