@@ -16,6 +16,7 @@ export type EscalationCategory =
   | Exclude<UnsupportedAction, "none">
   | "abuse"
   | "writer_unsupported"
+  | "oversized_input"
   | "internal_error";
 
 /** One short sentence per category. Rendered by code; the writer never produces a handoff. */
@@ -41,6 +42,10 @@ export const HANDOFF: Record<EscalationCategory, { response: string; reason: str
   other_offchannel: { response: "I can't do that myself, so I'm bringing in a person from our team.", reason: "Asked for an action outside my tools" },
   abuse: { response: "I'm bringing in a person from our team to help you.", reason: "Abusive or legal message" },
   writer_unsupported: { response: "I'm bringing in a person from our team to help with this.", reason: "Request not covered by tools or rules" },
+  oversized_input: {
+    response: "That message is too long for me to handle properly, so I'm bringing in a person from our team.",
+    reason: "Message exceeds the input limit",
+  },
   internal_error: { response: "I'm bringing in a person from our team to help with this.", reason: "Could not produce a verified reply" },
 };
 
@@ -53,7 +58,12 @@ export interface GateResult {
 
 const MONEY_ACTIONS: UnsupportedAction[] = ["move_paid_money", "charge_card"];
 
-export function gate(d: Decision, g: GuardResult, clinicNames: string[]): GateResult {
+/**
+ * @param actionConsensus how the two adapters agreed on an unsupported action
+ *   ("disagree" never escalates on its own; nothing can be executed or promised anyway,
+ *   because tools are read-only and validators block off-channel promises).
+ */
+export function gate(d: Decision, g: GuardResult, clinicNames: string[], actionConsensus: "single" | "agree" | "disagree" | "confirmation_unavailable" = "single"): GateResult {
   const fired: string[] = [];
   const t = THRESHOLDS;
 
@@ -74,7 +84,9 @@ export function gate(d: Decision, g: GuardResult, clinicNames: string[]): GateRe
   const actionP = choiceP(d.unsupportedAction);
   const policyQ = d.paymentMode.choice === "policy_question" && choiceP(d.paymentMode) >= t.policyOverride;
   if (action !== "none" && actionP >= t.act) {
-    if (MONEY_ACTIONS.includes(action) && policyQ && actionP < 0.85) {
+    if (actionConsensus === "disagree") {
+      fired.push("gate.action-disagreement-no-escalation");
+    } else if (MONEY_ACTIONS.includes(action) && policyQ && actionP < 0.85) {
       fired.push("gate.policy-question-not-execution");
     } else {
       fired.push(`gate.unsupported.${action}`);
@@ -96,15 +108,4 @@ export function gate(d: Decision, g: GuardResult, clinicNames: string[]): GateRe
   }
   fired.push("gate.answer");
   return { route: "answer", rulesFired: fired };
-}
-
-/** Values that deserve a second opinion from the other adapter. */
-export function isUncertain(d: Decision): string[] {
-  const t = THRESHOLDS;
-  const band = (p: number) => p >= t.uncertainLow && p < t.act;
-  const out: string[] = [];
-  if (band(d.needsHuman)) out.push("needs_human");
-  if (d.unsupportedAction.choice !== "none" && band(choiceP(d.unsupportedAction))) out.push("unsupported_action");
-  if (band(d.medicalUrgent)) out.push("medical_urgent");
-  return out;
 }
