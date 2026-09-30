@@ -23,7 +23,7 @@ export function prefetch(skills: string[], d: Decision, ctx: PatientContext, tex
   if (["clinic-packages", "payment", "what-matters", "promo-discount"].some(has)) {
     for (const id of clinicIds) run("getClinicPackages", { clinicId: id });
   }
-  if (/\b(?:doctor|surgeon|who\s+(?:does|performs)|dr\.?\s+\w+\s+(?:himself|herself|personally))\b/i.test(text)) {
+  if (/\b(?:doctors?|surgeons?|who\s+(?:does|performs)|dr\.?\s+\w+\s+(?:himself|herself|personally))\b/i.test(text)) {
     for (const id of clinicIds) run("getClinicDoctors", { clinicId: id });
   }
   if (has("payment") || has("assessment")) run("getLatestAssessment");

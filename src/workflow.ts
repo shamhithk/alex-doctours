@@ -223,7 +223,7 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
       (deps.gatherMode !== "never" &&
         // Only when a needed fact is actually missing after code prefetch.
         ((d.paymentMode.choice === "link_request" && sel.ids.includes("payment") && !ledger.links.some((l) => /assessment|payment link|checkout link/i.test(l.label))) ||
-          (/\b(?:doctor|surgeon)\b/i.test(g.text) && !ledger.allEntities().some((e) => e.kind === "clinic" && e.doctors?.length))));
+          (/\b(?:doctors?|surgeons?)\b/i.test(g.text) && !ledger.allEntities().some((e) => e.kind === "clinic" && e.doctors?.length))));
     const system = () => buildWriterSystem(domain, sel, ctx, ledger).system;
     const built = buildWriterSystem(domain, sel, ctx, ledger);
     trace.prompt = { approxTokens: built.approxTokens, system: built.system, user: renderUserMessage(ctx, g.redacted) };
@@ -243,7 +243,7 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
         linksAlreadySent: ctx.linksAlreadySent,
         paymentSkillLoaded: sel.ids.includes("payment"),
         linkRequested: d.paymentMode.choice === "link_request",
-        selectionWritePlanned: Object.keys(planSelection(d, ctx.clinics.map((x) => x.id)).selection).length > 0,
+        selectionWritePlanned: Object.keys(planSelection(d, ctx.clinics.map((x) => x.id), g.text).selection).length > 0,
         codeFollowUp: d.pausing >= PAUSE_FOLLOW_UP.threshold ? PAUSE_FOLLOW_UP.timing : null,
       },
     };
@@ -329,7 +329,7 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
 
     // 9. Commit writes after validation.
     const memory = buildMemory(final.source === "writer" ? final.out.memory : null, d);
-    const c = await mark("commit", () => commitWrites(d, memory, exec, ctx.clinics.map((x) => x.id)));
+    const c = await mark("commit", () => commitWrites(d, memory, exec, ctx.clinics.map((x) => x.id), g.text));
     trace.commits = c.receipts.map((r) => ({ tool: r.tool, ok: r.ok, args: r.args }));
     trace.commitSkipped = c.skipped;
     // A reply that says something was noted or saved is sent only with a successful write receipt.
