@@ -16,6 +16,9 @@ import {
 
 export interface WriterAttempt {
   phase: "gather" | "draft" | "repair";
+  startedAt: number;
+  /** Raw model text (truncated), for trace viewers. */
+  output: string;
   latencyMs: number;
   usage: Usage;
   model: string;
@@ -51,8 +54,21 @@ export async function runWriter(opts: {
   ledger: Ledger;
   vctx: ValidateContext;
 }): Promise<WriterResult> {
-  const { client, exec, ledger } = opts;
   const attempts: WriterAttempt[] = [];
+  try {
+    return await runWriterInner(opts, attempts);
+  } catch (e) {
+    // Keep completed calls' usage for cost accounting when a provider fails mid-turn.
+    (e as any).partialAttempts = attempts;
+    throw e;
+  }
+}
+
+async function runWriterInner(
+  opts: Parameters<typeof runWriter>[0],
+  attempts: WriterAttempt[],
+): Promise<WriterResult> {
+  const { client, exec, ledger } = opts;
   let usage = emptyUsage();
 
   if (opts.gather && opts.gatherTools.length) {
@@ -60,6 +76,7 @@ export async function runWriter(opts: {
     const msgs: Msg[] = [{ role: "user", content: opts.userMessage }];
     let calls = 0;
     for (let round = 0; round < MAX_GATHER_ROUNDS && calls < MAX_TOOL_CALLS; round++) {
+      const startedAt = Date.now();
       const res = await client.chat({
         system:
           opts.system() +
@@ -77,6 +94,8 @@ export async function runWriter(opts: {
       });
       attempts.push({
         phase: "gather",
+        startedAt,
+        output: res.text.slice(0, 4000),
         latencyMs: res.latencyMs,
         usage: res.usage,
         model: res.model,
@@ -93,6 +112,7 @@ export async function runWriter(opts: {
   }
 
   const draft = async (messages: Msg[], phase: "draft" | "repair") => {
+    const startedAt = Date.now();
     const res = await client.chat({
       system: opts.system(),
       messages,
@@ -110,7 +130,7 @@ export async function runWriter(opts: {
       rendered = r.rendered;
       violations = [...v0, ...r.violations, ...validate(out, r.rendered, opts.vctx)];
     }
-    attempts.push({ phase, latencyMs: res.latencyMs, usage: res.usage, model: res.model, violations, finishReason: res.finishReason });
+    attempts.push({ phase, startedAt, output: res.text.slice(0, 4000), latencyMs: res.latencyMs, usage: res.usage, model: res.model, violations, finishReason: res.finishReason });
     return { out, rendered, violations, rawText: res.text };
   };
 

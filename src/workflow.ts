@@ -1,8 +1,8 @@
 import { ReplySchema, WorkingMemoryUpdatesSchema, type InputItem, type Reply, type WorkingMemoryUpdates } from "./contracts.js";
 import { renderUserMessage, type PatientContext } from "./context.js";
-import { guardInput } from "./guards/input.js";
+import { guardInput, HARD_INPUT_LIMIT } from "./guards/input.js";
 import { buildQuestions, routerState, type QuestionSet } from "./decision/questions.js";
-import type { Router, RouterResult } from "./decision/router.js";
+import { mergeChunks, type Router, type RouterResult } from "./decision/router.js";
 import { choiceP } from "./decision/adapter.js";
 import { gate, HANDOFF, THRESHOLDS, type EscalationCategory } from "./policy/gate.js";
 import { selectSkills, applyConditions, type Domain, type Selection } from "./skills/loader.js";
@@ -13,9 +13,11 @@ import { ToolExecutor } from "./tools/executor.js";
 import { READ_TOOLS } from "./tools/registry.js";
 import { buildWriterSystem } from "./writer/prompt.js";
 import { runWriter, type WriterResult } from "./writer/writer.js";
-import { minimalReply } from "./writer/fallback.js";
+import { buildFallback } from "./writer/fallback.js";
+import { hard, render, validate, type Rendered, type WriterOutput } from "./validation/validate.js";
 import { commitWrites } from "./commit.js";
-import { addUsage, emptyUsage, type LlmClient } from "./llm/client.js";
+import { type LlmClient } from "./llm/client.js";
+import { fromJevUsage, fromLlmUsage, fromRouterUsage, totals, type StageUsage, type UsageTotals } from "./usage.js";
 import type { SystemOneAdapter } from "./decision/systemone.js";
 
 export interface Deps {
@@ -31,6 +33,10 @@ export interface Deps {
 
 export interface Trace {
   id: string;
+  /** Epoch ms when processing started. */
+  startedAt: number;
+  /** Step timings for waterfalls: { step, start, end } in epoch ms. */
+  timeline: { step: string; start: number; end: number }[];
   message: string;
   route: string;
   category?: string;
@@ -38,21 +44,26 @@ export interface Trace {
   router?: {
     adapter: string;
     fallbackUsed: boolean;
-    adjudicated: string[];
+    secondOpinion: string[];
+    merged: RouterResult["merged"];
+    actionConsensus: RouterResult["actionConsensus"];
+    chunks: number;
     errors: string[];
     latencyMs: number;
     signals: Record<string, unknown>;
   };
   skills?: { loaded: string[]; selectedBy: Selection["selectedBy"]; suppressed: Selection["suppressed"]; versions: Record<string, number> };
-  prompt?: { approxTokens: number };
-  tools: { callId: string; tool: string; args: unknown; ok: boolean; error?: string; origin: string }[];
+  prompt?: { approxTokens: number; system?: string; user?: string };
+  tools: { callId: string; tool: string; args: unknown; ok: boolean; error?: string; origin: string; at: number; ms: number; result?: string }[];
   facts?: number;
   writer?: { model: string; outcome: WriterResult["outcome"] | "fallback"; attempts: unknown[]; claims: unknown[]; providerFailover?: string };
   violations?: unknown[];
   outputBattery?: Record<string, number>;
   commits?: { tool: string; ok: boolean; args: unknown }[];
   commitSkipped?: string[];
-  usage: ReturnType<typeof emptyUsage>;
+  usage: UsageTotals;
+  /** Every model/classifier call by stage; unknown costs are null, estimates are flagged. */
+  usageByStage: StageUsage[];
   latencyMs: number;
   reply: Reply;
   error?: string;
@@ -65,17 +76,31 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
   const g = guardInput(item.text);
   const trace: Trace = {
     id: item.id,
+    startedAt: started,
+    timeline: [],
     message: g.redacted,
     route: "",
     rulesFired: [],
     tools: [],
-    usage: emptyUsage(),
+    usage: totals([]),
+    usageByStage: [],
     latencyMs: 0,
     reply: undefined as unknown as Reply,
   };
   const finish = (reply: Reply) => {
+    trace.usage = totals(trace.usageByStage);
     trace.reply = ReplySchema.parse(reply);
-    trace.tools = exec.records.map((r) => ({ callId: r.callId, tool: r.tool, args: r.args, ok: r.ok, error: r.error, origin: r.origin }));
+    trace.tools = exec.records.map((r) => ({
+      callId: r.callId,
+      tool: r.tool,
+      args: r.args,
+      ok: r.ok,
+      error: r.error,
+      origin: r.origin,
+      at: r.at,
+      ms: r.ms,
+      result: r.ok ? maskPII(JSON.stringify(r.result)).slice(0, 3000) : undefined,
+    }));
     trace.latencyMs = Date.now() - started;
     return { reply: trace.reply, trace };
   };
@@ -97,6 +122,16 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
     });
   };
 
+  const mark = async <T>(step: string, fn: () => Promise<T> | T): Promise<T> => {
+    const start = Date.now();
+    try {
+      return await fn();
+    } finally {
+      trace.timeline.push({ step, start, end: Date.now() });
+    }
+  };
+  trace.timeline.push({ step: "guards", start: started, end: Date.now() });
+
   try {
     // 1. Human fast path: a clear affirmative request never waits on a model.
     if (g.humanFastPath) {
@@ -104,22 +139,35 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
       return handoff("human");
     }
 
-    // 2. Typed interpretation.
-    let rr: RouterResult;
-    rr = await deps.router.decide({ text: g.redacted, state: routerState(ctx, g.redacted), qs });
+    // Oversized input: a deliberate, documented handoff rather than silent truncation.
+    if (g.chars > HARD_INPUT_LIMIT) {
+      trace.rulesFired.push("gate.oversized-input");
+      return handoff("oversized_input");
+    }
+
+    // 2. Typed interpretation over the FULL message. Long messages are routed chunk by
+    //    chunk and merged (terminal signals by max) before anything is drafted.
+    const chunks = chunkText(g.redacted, ROUTER_CHUNK_CHARS);
+    const rr: RouterResult = await mark("router", async () =>
+      mergeChunks(await Promise.all(chunks.map((c) => deps.router.decide({ text: c, state: routerState(ctx, c), qs })))),
+    );
+    trace.usageByStage.push(...rr.usages.map((u) => fromRouterUsage(u.stage, u.usage)));
     const d = rr.decision;
     if (g.injectionHeuristic) d.promptInjection = Math.max(d.promptInjection, 0.9);
     trace.router = {
       adapter: d.adapter,
       fallbackUsed: rr.fallbackUsed,
-      adjudicated: rr.adjudicated,
+      secondOpinion: rr.secondOpinion,
+      merged: rr.merged,
+      actionConsensus: rr.actionConsensus,
+      chunks: chunks.length,
       errors: rr.errors,
       latencyMs: d.latencyMs,
       signals: summarise(d),
     };
 
     // 3. Policy gate (code holds authority).
-    const gr = gate(d, g, ctx.clinics.map((c) => c.name));
+    const gr = await mark("gate", () => gate(d, g, ctx.clinics.map((c) => c.name), rr.actionConsensus));
     trace.rulesFired.push(...gr.rulesFired);
     if (gr.route === "handoff") {
       return handoff(gr.category!, d.promptInjection >= THRESHOLDS.act ? "prompt-injection attempt" : undefined);
@@ -133,7 +181,7 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
     const requested = Object.entries(d.skills)
       .filter(([, p]) => p >= THRESHOLDS.skill)
       .map(([id]) => id);
-    const sel = selectSkills(domain, requested);
+    const sel = await mark("skills", () => selectSkills(domain, requested));
     trace.skills = {
       loaded: sel.ids,
       selectedBy: sel.selectedBy,
@@ -143,7 +191,7 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
 
     // 5. Evidence, code first.
     const ledger = new Ledger();
-    prefetch(sel.ids, d, ctx, g.text, exec, ledger);
+    await mark("evidence", () => prefetch(sel.ids, d, ctx, g.text, exec, ledger));
     for (const id of sel.ids) {
       for (const url of domain.skills.get(id)!.links) ledger.addLink(url, `${domain.skills.get(id)!.title} page`, `skill:${id}`);
     }
@@ -155,9 +203,10 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
       (deps.gatherMode !== "never" &&
         // Only when a needed fact is actually missing after code prefetch.
         ((d.paymentMode.choice === "link_request" && sel.ids.includes("payment") && !ledger.links.some((l) => /assessment|payment link|checkout link/i.test(l.label))) ||
-          (/\b(?:doctor|surgeon)\b/i.test(g.text) && !ledger.facts.some((f) => f.key === "clinic.doctor"))));
+          (/\b(?:doctor|surgeon)\b/i.test(g.text) && !ledger.allEntities().some((e) => e.kind === "clinic" && e.doctors?.length))));
     const system = () => buildWriterSystem(domain, sel, ctx, ledger).system;
-    trace.prompt = { approxTokens: buildWriterSystem(domain, sel, ctx, ledger).approxTokens };
+    const built = buildWriterSystem(domain, sel, ctx, ledger);
+    trace.prompt = { approxTokens: built.approxTokens, system: built.system, user: renderUserMessage(ctx, g.redacted) };
     const loadedRulesText = [domain.core.body, ...sel.ids.map((id) => applyConditions(domain.skills.get(id)!.body, flags(ctx)))].join("\n");
     const writerArgs = {
       system,
@@ -179,16 +228,23 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
     let writerUsed = deps.writer;
     let failover: string | undefined;
     let w: WriterResult;
-    try {
-      w = await runWriter({ client: deps.writer, ...writerArgs });
-    } catch (e) {
-      if (!deps.writerFallback) throw e;
-      failover = `${deps.writer.profile.key} failed (${(e as Error).message.slice(0, 120)}); used ${deps.writerFallback.profile.key}`;
-      writerUsed = deps.writerFallback;
-      w = await runWriter({ client: deps.writerFallback, ...writerArgs });
-    }
-    trace.usage = addUsage(trace.usage, w.usage);
-    trace.facts = ledger.facts.length;
+    w = await mark("writer", async () => {
+      try {
+        return await runWriter({ client: deps.writer, ...writerArgs });
+      } catch (e) {
+        for (const a of ((e as any).partialAttempts ?? []) as { phase: string; usage: unknown }[]) {
+          trace.usageByStage.push(fromLlmUsage(`writer:${deps.writer.profile.key}:${a.phase}`, a.usage));
+        }
+        // The call that failed may still have been billed; its usage is unknown, not zero.
+        trace.usageByStage.push({ stage: `writer:${deps.writer.profile.key}:failed-call`, inputTokens: null, outputTokens: null, costUsd: null });
+        if (!deps.writerFallback) throw e;
+        failover = `${deps.writer.profile.key} failed (${(e as Error).message.slice(0, 120)}); used ${deps.writerFallback.profile.key}`;
+        writerUsed = deps.writerFallback;
+        return await runWriter({ client: deps.writerFallback, ...writerArgs });
+      }
+    });
+    for (const a of w.attempts) trace.usageByStage.push(fromLlmUsage(`writer:${writerUsed.profile.key}:${a.phase}`, a.usage));
+    trace.facts = ledger.factCount;
     trace.violations = w.violations;
     trace.writer = {
       model: writerUsed.profile.key,
@@ -202,42 +258,54 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
       trace.rulesFired.push("writer.unsupported-request");
       return handoff("writer_unsupported", w.out?.unsupported ?? undefined);
     }
-    let responseText: string;
-    let attachments: string[] | null = null;
-    let intent = w.out?.intent ?? "answer patient question";
-    if (w.outcome === "failed" || !w.rendered) {
-      const fb = minimalReply(sel.ids, ledger);
-      if (!fb) return handoff("internal_error", "draft failed validation twice");
-      trace.writer.outcome = "fallback";
-      responseText = fb.text;
-      intent = fb.intent;
+    // Choose the COMPLETE result before anything is committed. A rejected draft contributes
+    // nothing: its text, memory, follow-up and claims are all discarded.
+    let final: { out: WriterOutput; rendered: Rendered; source: "writer" | "fallback" };
+    if ((w.outcome === "ok" || w.outcome === "repaired") && w.out && w.rendered) {
+      final = { out: w.out, rendered: w.rendered, source: "writer" };
     } else {
-      responseText = w.rendered.text;
-      attachments = w.rendered.attachments.length ? w.rendered.attachments : null;
+      const fb = buildFallback(sel.ids, ledger, g.text, d);
+      if ("escalate" in fb) {
+        trace.rulesFired.push("fallback.action-request-handoff");
+        return handoff("writer_unsupported", fb.escalate);
+      }
+      const r = render(fb.out, ledger);
+      const fv = [...r.violations, ...validate(fb.out, r.rendered, writerArgs.vctx)];
+      if (hard(fv).length) return handoff("internal_error", "fallback failed validation");
+      final = { out: fb.out, rendered: r.rendered, source: "fallback" };
+      trace.writer.outcome = "fallback";
+      trace.writer.claims = fb.out.claims;
+      trace.rulesFired.push("fallback.validated");
     }
+    const responseText = final.rendered.text;
+    const attachments = final.rendered.attachments.length ? final.rendered.attachments : null;
+    const intent = final.out.intent;
 
     // Output battery: semantic signals recorded for eval (never an escalation trigger).
     if (deps.outputBattery) {
       try {
-        const ob = await deps.outputBattery.ask(
+        const battery = deps.outputBattery;
+        const ob = await mark("output-battery", () => battery.ask(
           { patient_message: g.redacted, coordinator_reply: responseText },
           OUTPUT_BATTERY,
-        );
+        ));
         trace.outputBattery = Object.fromEntries(Object.entries(ob.answers).map(([k, a]) => [k, a.p ?? 0]));
+        trace.usageByStage.push(fromJevUsage("output-battery", ob.usage));
       } catch (e) {
         trace.outputBattery = { error: 1 } as any;
+        trace.usageByStage.push({ stage: "output-battery:failed-call", inputTokens: null, outputTokens: null, costUsd: null });
       }
     }
 
     // 9. Commit writes after validation.
-    const memory = buildMemory(w.out?.memory ?? null, d);
-    const c = commitWrites(d, memory, exec, ctx.clinics.map((x) => x.id));
+    const memory = buildMemory(final.source === "writer" ? final.out.memory : null, d);
+    const c = await mark("commit", () => commitWrites(d, memory, exec, ctx.clinics.map((x) => x.id)));
     trace.commits = c.receipts.map((r) => ({ tool: r.tool, ok: r.ok, args: r.args }));
     trace.commitSkipped = c.skipped;
 
     // 10. Finalize.
-    let shouldFollowUp = w.out?.should_follow_up === true && !!w.out?.follow_up_timing;
-    let followUpTiming = shouldFollowUp ? w.out!.follow_up_timing : null;
+    let shouldFollowUp = final.source === "writer" && final.out.should_follow_up === true && !!final.out.follow_up_timing;
+    let followUpTiming = shouldFollowUp ? final.out.follow_up_timing : null;
     if (d.pausing >= 0.7 && !shouldFollowUp) {
       shouldFollowUp = true;
       followUpTiming = "1 month";
@@ -323,3 +391,36 @@ export const OUTPUT_BATTERY: Record<string, unknown> = {
   unprompted_financing: { type: "noul", instructions: "Does the reply bring up financing, Klarna, PayPal or layaway when the patient did not ask about payment options?" },
   asks_multiple_questions: { type: "noul", instructions: "Does the reply ask the patient more than one question?" },
 };
+
+/** Mask emails and phone numbers in trace payloads (tool results carry patient contact details). */
+export function maskPII(s: string): string {
+  return s
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
+    .replace(/\+?\d[\d\s().-]{8,}\d/g, (m) => {
+      const digits = m.replace(/\D/g, "").length;
+      return digits >= 10 && digits <= 15 ? "[phone]" : m; // ids like 44444444-4444-... have 32 digits
+    });
+}
+
+/** Messages up to this length are routed whole; longer ones chunk by chunk. */
+export const ROUTER_CHUNK_CHARS = 12_000;
+
+/** Split on sentence boundaries into chunks of at most `max` characters (a single long sentence is hard-split). */
+export function chunkText(text: string, max: number): string[] {
+  if (text.length <= max) return [text];
+  const out: string[] = [];
+  let cur = "";
+  for (const s of text.split(/(?<=[.!?])\s+/)) {
+    if ((cur + " " + s).length > max && cur) {
+      out.push(cur);
+      cur = "";
+    }
+    if (s.length > max) {
+      for (let i = 0; i < s.length; i += max) out.push(s.slice(i, i + max));
+      continue;
+    }
+    cur = cur ? `${cur} ${s}` : s;
+  }
+  if (cur) out.push(cur);
+  return out;
+}

@@ -1,34 +1,79 @@
-import type { Ledger } from "../evidence/ledger.js";
+import type { Decision } from "../contracts.js";
+import type { ClinicEntity, Ledger, PackageEntity } from "../evidence/ledger.js";
+import type { WriterOutput } from "../validation/validate.js";
+import { THRESHOLDS } from "../policy/gate.js";
 
 /**
- * Deterministic minimal reply for a SUPPORTED request whose drafts failed
- * validation twice. Built only from ledger facts and links, so it cannot state
- * anything unverified. Returns null when nothing safe can be composed.
+ * Deterministic replacement for a SUPPORTED informational request whose drafts
+ * failed validation twice. It is a complete WriterOutput built from clause tokens
+ * and ledger link ids only, chosen by what the patient asked, and it goes through
+ * the same render + validate path as a model draft before anything is committed.
+ * The rejected draft contributes nothing (no text, memory, follow-up or claims).
+ *
+ * Returns { escalate } when the request looks like an ACTION (any adapter flagged
+ * one): an unfulfillable action is a handoff, not a missing detail.
  */
-export function minimalReply(skills: string[], ledger: Ledger): { text: string; intent: string } | null {
+export function buildFallback(skills: string[], ledger: Ledger, text: string, d: Decision): { out: WriterOutput } | { escalate: string } {
+  const a = d.unsupportedAction;
+  if (a.choice !== "none" && (a.probabilities[a.choice] ?? 0) >= THRESHOLDS.uncertainLow) return { escalate: `possible action request (${a.choice})` };
+
+  const t = text.toLowerCase();
+  const clinics = ledger.allEntities().filter((e): e is ClinicEntity => e.kind === "clinic");
+  const scoped = scopeClinics(clinics, d, t);
+  const pkgs = scoped.flatMap((c) => c.packageRefs.map((r) => ledger.entity(r) as PackageEntity)).filter(Boolean);
+  const named = pkgs.filter((p) => t.includes(p.name.toLowerCase()));
+  const pkgScope = named.length ? named : pkgs;
   const parts: string[] = [];
+  const sources: string[] = [];
   const links: string[] = [];
-  const byClinic = new Map<string, { name: string; pkgs: Map<string, { name: string; price?: string; deposit?: string }> }>();
-  for (const f of ledger.facts) {
-    if (!f.entity.packageId || !f.entity.clinicName) continue;
-    const c = byClinic.get(f.entity.clinicName) ?? { name: f.entity.clinicName, pkgs: new Map() };
-    const p = c.pkgs.get(f.entity.packageId) ?? { name: f.entity.packageName ?? "" };
-    if (f.key === "package.basePrice") p.price = f.render;
-    if (f.key === "package.depositAmount") p.deposit = f.render;
-    c.pkgs.set(f.entity.packageId, p);
-    byClinic.set(f.entity.clinicName, c);
-  }
-  if (["clinic-packages", "payment", "what-matters", "promo-discount"].some((s) => skills.includes(s))) {
-    for (const c of byClinic.values()) {
-      const list = [...c.pkgs.values()].filter((p) => p.price && p.deposit).map((p) => `${p.name} is ${p.price} with a ${p.deposit} deposit`);
-      if (list.length) parts.push(`${c.name}: ${list.join("; ")}.`);
+  const add = (token: string) => {
+    const [ref, kind] = token.slice(2, -2).split(":");
+    if (ledger.renderClause(ref, kind) === null) return false;
+    parts.push(`${token}.`);
+    sources.push(`${ref}:${kind}`);
+    return true;
+  };
+
+  if (/\b(?:doctor|surgeon|who\s+(?:does|performs))\b/.test(t)) for (const c of scoped) add(`{{${c.ref}:doctors}}`);
+  if (/\b(?:includ|hotel|nights?|come with|what'?s in)\w*/.test(t)) for (const p of pkgScope) add(`{{${p.ref}:inclusions}}`);
+  if (/\b(?:which days?|weekdays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|book on)\b/.test(t)) for (const p of pkgScope) add(`{{${p.ref}:weekdays}}`);
+  if (/\b(?:afro|4c|curl\w*|textured|special\w*)\b/.test(t)) for (const c of scoped) add(`{{${c.ref}:specialty}}`);
+  if (/\b(?:what|which|how many)\s+packages?\b/.test(t)) for (const c of scoped) add(`{{${c.ref}:packages}}`);
+  if (/\b(?:cost|costs|price|prices|how much|deposit|expensive|cheap|pricing)\b|\$/.test(t)) for (const p of pkgScope) add(`{{${p.ref}:price+deposit}}`);
+  if (skills.includes("payment") && (d.paymentMode.choice === "link_request" || /\b(?:pay|book|checkout)\b/.test(t))) {
+    const link = ledger.links.find((l) => /payment link|checkout link/.test(l.label)) ?? ledger.links.find((l) => l.label.startsWith("Patient's personal assessment"));
+    if (link) {
+      parts.push(link.label.startsWith("Patient's personal assessment") ? "You can book and pay your deposit from your assessment using the link below." : "You can pay the deposit using the link below.");
+      links.push(link.id);
+      sources.push(link.id, "payment.assessment-book");
     }
   }
-  const assessment = ledger.links.find((l) => l.label.startsWith("Patient's personal assessment"));
-  if (skills.includes("payment") && assessment) {
-    parts.push("You can book and pay your deposit from your assessment using the link below.");
-    links.push(assessment.url);
+  if (skills.includes("consultation") && /\bconsult/.test(t)) {
+    const link = ledger.links.find((l) => l.url.endsWith("/consultation"));
+    parts.push("The consultation is free, and it's a phone call with our team." + (link ? " You can book it using the link below." : ""));
+    sources.push("consultation.free", "consultation.format");
+    if (link) links.push(link.id);
   }
-  if (!parts.length) return null;
-  return { text: [parts.join(" "), ...links].join("\n"), intent: "answer from verified facts" };
+  const reply = parts.length ? parts.join(" ") : "I don't have that exact detail.";
+  return {
+    out: {
+      reply,
+      link_ids: links,
+      attachment_ids: [],
+      claims: parts.length ? [{ text: "deterministic fallback from verified facts", sources }] : [],
+      intent: parts.length ? "answer from verified facts" : "state missing detail",
+      should_follow_up: false,
+      follow_up_timing: null,
+      memory: null,
+      unsupported: null,
+    },
+  };
+}
+
+function scopeClinics(clinics: ClinicEntity[], d: Decision, t: string): ClinicEntity[] {
+  const ids = new Set([d.clinicMentioned.choice, d.clinicLean.choice]);
+  const byRouter = clinics.filter((c) => ids.has(c.id));
+  if (byRouter.length) return byRouter;
+  const byName = clinics.filter((c) => t.includes(c.name.toLowerCase().replace(/ clinic$/, "")));
+  return byName.length ? byName : clinics;
 }

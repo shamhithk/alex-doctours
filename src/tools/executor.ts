@@ -9,6 +9,8 @@ export interface ToolRecord {
   result: unknown;
   error?: string;
   ms: number;
+  /** Epoch ms when the call started (for trace waterfalls). */
+  at: number;
   origin: "code" | "model" | "commit";
 }
 
@@ -29,7 +31,7 @@ export class ToolExecutor {
     const callId = `t${++this.seq}`;
     const started = Date.now();
     const fail = (error: string): ToolRecord => {
-      const rec: ToolRecord = { callId, tool: name, args, ok: false, result: null, error, ms: 0, origin };
+      const rec: ToolRecord = { callId, tool: name, args, ok: false, result: null, error, ms: 0, at: started, origin };
       this.records.push(rec);
       return rec;
     };
@@ -43,7 +45,7 @@ export class ToolExecutor {
     const key = `${resolved}:${stableStringify(parsed.data)}`;
     const cached = this.cache.get(key);
     if (cached && def.kind === "read") {
-      const rec = { ...cached, callId, origin, ms: 0 };
+      const rec = { ...cached, callId, origin, ms: 0, at: started };
       this.records.push(rec);
       return rec;
     }
@@ -55,7 +57,7 @@ export class ToolExecutor {
     } catch (e) {
       return fail(`tool_threw: ${(e as Error).message}`);
     }
-    const rec: ToolRecord = { callId, tool: resolved, args: parsed.data, ok: true, result, ms: Date.now() - started, origin };
+    const rec: ToolRecord = { callId, tool: resolved, args: parsed.data, ok: true, result, ms: Date.now() - started, at: started, origin };
     if (def.kind === "read") this.cache.set(key, rec);
     this.records.push(rec);
     return rec;
