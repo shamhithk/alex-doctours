@@ -20,14 +20,14 @@ export function buildQuestions(domain: Domain, ctx: PatientContext): QuestionSet
     const key = `clinic_${c.slug.replace(/[^a-z0-9]/g, "_")}`;
     optionIds[key] = c.id;
     clinicOpts[key] = `The message refers to ${c.name}.`;
-    leanOpts[key] = `The patient states a choice of, preference for, or lean toward ${c.name} (e.g. "leaning toward", "want to go with", "sounds good", "probably", "heard it's great").`;
+    leanOpts[key] = `The patient states a choice of, preference for, or lean toward ${c.name} (e.g. "leaning toward", "want to go with", "sounds good", "probably", "heard it's great"). Asking about ${c.name} (its packages, prices, doctors, website, days) is NOT a lean.`;
   }
   const pkgOpts: Record<string, string> = {};
   for (const p of ctx.packages) {
     const clinic = ctx.clinics.find((c) => c.id === p.clinicId)!;
     const key = `pkg_${clinic.slug.replace(/[^a-z0-9]/g, "_")}_${p.name.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
     optionIds[key] = p.id;
-    pkgOpts[key] = `The patient picks or clearly leans toward the ${p.name} package at ${clinic.name}.`;
+    pkgOpts[key] = `The patient picks or clearly leans toward the ${p.name} package at ${clinic.name}. Asking what ${p.name} includes, costs or which days it runs is NOT a pick.`;
   }
 
   const q: Record<string, Question> = {
@@ -108,7 +108,8 @@ export function buildQuestions(domain: Domain, ctx: PatientContext): QuestionSet
     },
     clinic_lean: {
       type: "choice",
-      instructions: "Does the patient express a choice of or lean toward exactly one clinic?",
+      instructions:
+        "Does the patient express a choice of or lean toward exactly one clinic? Only an explicit statement of preference or decision counts. A question that names a clinic (what it offers, its price, doctors, website) is 'none'.",
       criteria: {
         ...leanOpts,
         torn: "The patient is genuinely undecided between two or more clinics.",
@@ -117,7 +118,8 @@ export function buildQuestions(domain: Domain, ctx: PatientContext): QuestionSet
     },
     package_lean: {
       type: "choice",
-      instructions: "Does the patient pick or clearly lean toward exactly one package?",
+      instructions:
+        "Does the patient pick or clearly lean toward exactly one package? Only an explicit statement of choice counts. A question that names a package (what it includes, costs, which days) is 'none'.",
       criteria: { ...pkgOpts, torn: "Torn between two or more packages.", none: "No package preference is expressed." },
     },
     communication_style: {
