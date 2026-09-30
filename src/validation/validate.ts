@@ -137,6 +137,11 @@ export function validate(out: WriterOutput, r: Rendered, c: ValidateContext): Vi
       addonNames: pkgs.flatMap((p) => p.included.map((a) => a.name)),
       selectionWritePlanned: c.selectionWritePlanned === true,
       codeFollowUp: c.codeFollowUp,
+      renderClause: (ref, kind) => c.ledger.renderClause(ref, kind),
+      counts: {
+        clinics: c.ledger.allEntities().filter((e) => e.kind === "clinic").length,
+        packages: pkgs.length,
+      },
     }),
     ...memoryViolations(out, c.neverEcho, collapseDigits, c.codeFollowUp),
   );
