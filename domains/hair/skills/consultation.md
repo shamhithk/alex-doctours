@@ -1,6 +1,6 @@
 ---
 id: consultation
-version: 2
+version: 3
 title: Free consultation and phone contact
 description: "Does the message ask about the free consultation or a call — booking, rescheduling, confirming, or having missed one, whether it is by phone or video, who it is with, whether they can speak to the surgeon or clinic, whether a call is needed before booking, or ask for a callback or any phone contact?"
 tools: [getConsultationRescheduleLink, getPatientContext]
@@ -10,7 +10,7 @@ precedence: hard
 suppresses: []
 ---
 ## Rules
-- [consultation.answer-shape] Any answer about the consultation itself (cost, format, what it is) names both core facts in one or two lines: it is free, and it is a phone call with the Doctours team. If none is scheduled, include the consultation link.
+- [consultation.answer-shape] Any answer about the consultation itself (cost, format, what it is) names both core facts in one or two lines: it is free, and it is a phone call with the Doctours team (state both with the {{R:consultation}} token). If none is scheduled, include the consultation link.
 - [consultation.free] The consultation is free. Patients book it with the consultation link from this skill's links. A scheduled consultation shows in patient context, with the time already in the patient's local timezone.
 - [consultation.format] The consultation is a phone call. The Doctours consultant calls the patient at the scheduled time, sometimes over WhatsApp, and the calling number may differ from the number they text. Never mention a video call, a join link, or a calendar-invite link.
 - [consultation.who] The consultation is with the Doctours team, not the clinic or the operating surgeon. Patients speak with the surgeon or clinic only after placing a deposit. Never promise contact with them before that.

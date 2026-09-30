@@ -22,6 +22,15 @@ export interface Skill {
 export interface Domain {
   core: { version: number; body: string; ruleIds: string[] };
   skills: Map<string, Skill>;
+  /** Policy facts rendered by code as {{R:<id>}}; each is bound to the rule that states it. */
+  facts: PolicyFact[];
+}
+
+export interface PolicyFact {
+  id: string;
+  rule: string;
+  skills: string[];
+  text: string;
 }
 
 const RULE_ID_RE = /^\s*-\s*\[([a-z0-9.\-_]+)\]/gim;
@@ -56,7 +65,16 @@ export function loadDomain(dir = resolve("domains/hair")): Domain {
     if (skills.has(skill.id)) throw new Error(`Duplicate skill id ${skill.id}`);
     skills.set(skill.id, skill);
   }
-  return { core: { version: Number(core.data.version ?? 1), body: core.content.trim(), ruleIds: ruleIds(core.content) }, skills };
+  const factsPath = join(dir, "policy-facts.md");
+  const facts: PolicyFact[] = existsSync(factsPath)
+    ? ((matter(readFileSync(factsPath, "utf8")).data.facts ?? []) as any[]).map((f) => ({ id: String(f.id), rule: String(f.rule), skills: asList(f.skills), text: String(f.text) }))
+    : [];
+  return { core: { version: Number(core.data.version ?? 1), body: core.content.trim(), ruleIds: ruleIds(core.content) }, skills, facts };
+}
+
+/** Policy facts available for a set of loaded skills ("core" facts are always available). */
+export function factsFor(domain: Domain, skillIds: string[]): PolicyFact[] {
+  return domain.facts.filter((f) => f.skills.some((s) => s === "core" || skillIds.includes(s)));
 }
 
 function asList(v: unknown): string[] {

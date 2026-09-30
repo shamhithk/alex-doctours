@@ -120,6 +120,12 @@ export class Ledger {
   attachments: AttachmentRef[] = [];
   context: ContextFact[] = [];
   notes: string[] = [];
+  /** Policy facts from loaded rules, rendered as {{R:<id>}}; value = { text, rule }. */
+  readonly policy = new Map<string, { text: string; rule: string }>();
+
+  addPolicyFacts(facts: { id: string; text: string; rule: string }[]) {
+    for (const f of facts) this.policy.set(f.id, { text: f.text, rule: f.rule });
+  }
 
   entity(ref: string): Entity | undefined {
     return this.entities.get(ref);
@@ -263,6 +269,7 @@ export class Ledger {
 
   /** Render one clause token; null if the entity or clause does not exist or has no data. */
   renderClause(ref: string, kind: string): string | null {
+    if (ref === "R") return this.policy.get(kind)?.text ?? null;
     const e = this.entities.get(ref);
     if (!e) return null;
     if (e.kind === "package") return PACKAGE_CLAUSES[kind]?.(e) ?? null;
@@ -280,6 +287,7 @@ export class Ledger {
         if (preview) out.push({ token: `{{${e.ref}:${kind}}}`, ref: e.ref, kind, preview });
       }
     }
+    for (const [id, f] of this.policy) out.push({ token: `{{R:${id}}}`, ref: "R", kind: id, preview: f.text });
     return out;
   }
 
@@ -290,6 +298,10 @@ export class Ledger {
         e.kind === "package" ? `${e.ref} = package "${e.name}" at ${e.clinicName}` : e.kind === "clinic" ? `${e.ref} = clinic "${e.name}"` : `AS = the patient's assessment`;
       lines.push(header);
       for (const c of this.availableClauses().filter((x) => x.ref === e.ref)) lines.push(`  ${c.token} → "${c.preview}"`);
+    }
+    if (this.policy.size) {
+      lines.push("R = policy facts from the loaded rules");
+      for (const c of this.availableClauses().filter((x) => x.ref === "R")) lines.push(`  ${c.token} → "${c.preview}"`);
     }
     for (const c of this.context) lines.push(`(context) ${c.text}`);
     return lines.length ? lines.join("\n") : "(no facts fetched this turn)";

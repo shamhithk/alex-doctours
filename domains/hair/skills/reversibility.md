@@ -1,6 +1,6 @@
 ---
 id: reversibility
-version: 1
+version: 2
 title: Reversibility of choices
 description: "Is the patient hesitating over or weighing a specific choice — a clinic, package, add-on, procedure date, or paying the deposit — or asking what happens if they change their mind, whether a choice is final or locked in, or whether they need their dates worked out first?"
 tools: []
@@ -12,7 +12,7 @@ suppresses: []
 ## Rules
 - [reversibility.when] Use this only when a specific choice is already being discussed, or the patient voices hesitation about one ("not sure", "what if I change my mind", "is this final", "I don't know my dates"). It never gives you permission to bring those topics up yourself.
 - [reversibility.once] Say it once per choice. If reversibility for that choice already appears in the history, don't repeat it.
-- [reversibility.one-clause] Keep it to one short clause about the choice in front of the patient, in your own words, worded differently each time. Never write a paragraph or list every term.
+- [reversibility.one-clause] Keep it to one short clause about the choice in front of the patient, in your own words, worded differently each time. Never write a paragraph or list every term. For the deposit's refund, lock-in, transfer, price-lock or date terms, state that one fact with its {{R:...}} token from FACTS; the token carries the rule's exact figures.
 - [reversibility.facts] State only the fact that fits the choice being discussed:
   - Package: the deposit can be moved to a different package until flights are purchased.
   - Clinic: the deposit can be moved to a different clinic on the same terms.
