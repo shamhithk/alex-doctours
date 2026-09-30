@@ -1,0 +1,18 @@
+flowchart TD
+  A["Patient SMS"] --> G["Input guards<br/>card redaction, human fast path"]
+  G --> RT["Typed router, Jev + LLM check<br/>~30 yes/no and choice questions"]
+  RT --> GT{"Policy gate"}
+  GT -->|"safety, wants a person ·<br/>action no tool can do"| H["Handoff<br/>one sentence, escalate: true, stop"]
+  GT -->|"which clinic?"| C["One clarifying question"]
+  GT -->|"answer"| S["Core rules + only the needed skills<br/>facts fetched → price and link tokens"]
+  S --> W["Writer LLM<br/>JSON with fact tokens"]
+  W --> V{"Checks"}
+  V -->|"fail"| RP["One repair,<br/>then a safe fallback"]
+  RP --> CM
+  V -->|"pass"| CM["Save choices, reply + trace"]
+  classDef code fill:#ddf4ff,stroke:#0969da,color:#1f2328
+  classDef model fill:#dafbe1,stroke:#1a7f37,color:#1f2328
+  classDef stop fill:#fff8c5,stroke:#9a6700,color:#1f2328
+  class G,GT,S,V,RP,CM,C code
+  class RT,W model
+  class H stop

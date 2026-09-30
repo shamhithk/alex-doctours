@@ -28,44 +28,15 @@ npm run reply -- --input messages.json --output replies.json
 
 **Before:** one prompt does everything.
 
-```mermaid
-flowchart LR
-  A["Patient SMS"] --> P["One system prompt<br/>41k tokens · 44 sections<br/>every rule, every message"]
-  P --> L["LLM + 14 tools<br/>decides, looks up, writes"]
-  L --> R["Reply"]
-  L -. "no path" .-> X["Hand off to a person"]
-  classDef old fill:#ffebe9,stroke:#cf222e,color:#1f2328
-  classDef none fill:#f6f8fa,stroke:#d1d9e0,stroke-dasharray: 4 3,color:#59636e
-  class P,L old
-  class X none
-```
+<img src="docs/img/flow-before.svg" alt="Before: patient SMS goes to one 41k-token prompt and an LLM with 14 tools; there is no path to hand off to a person" width="100%">
 
 Every rule competes for attention on every message. Prices and links are typed by the model, nothing checks the reply, and nothing can hand off to a person.
 
 **After:** models read and write, and **code** decides.
 
-```mermaid
-flowchart TD
-  A["Patient SMS"] --> G["Input guards<br/>card redaction · human fast path"]
-  G --> RT["Typed router · Jev + LLM check<br/>~30 yes/no and choice questions"]
-  RT --> GT{"Policy gate"}
-  GT -->|"safety · wants a person ·<br/>action no tool can do"| H["Handoff<br/>one sentence · escalate: true · stop"]
-  GT -->|"which clinic?"| C["One clarifying question"]
-  GT -->|"answer"| S["Core rules + only the needed skills<br/>facts fetched → price & link tokens"]
-  S --> W["Writer LLM<br/>JSON with fact tokens"]
-  W --> V{"Checks"}
-  V -->|"fail"| RP["One repair,<br/>then a safe fallback"]
-  RP --> CM
-  V -->|"pass"| CM["Save choices · reply + trace"]
-  classDef code fill:#ddf4ff,stroke:#0969da,color:#1f2328
-  classDef model fill:#dafbe1,stroke:#1a7f37,color:#1f2328
-  classDef stop fill:#fff8c5,stroke:#9a6700,color:#1f2328
-  class G,GT,S,V,RP,CM,C code
-  class RT,W model
-  class H stop
-```
+<img src="docs/img/flow-after.svg" alt="After: input guards, typed router and a policy gate; the gate either hands off, asks one clarifying question, or loads only the needed skills and facts for the writer, whose reply is checked, repaired or replaced by a safe fallback before choices are saved" width="80%">
 
-<sub>🟦 code · 🟩 model · 🟨 terminal handoff (no writer call, no writes after it)</sub>
+<sub>🟦 code · 🟩 model · 🟨 terminal handoff (no writer call, no writes after it). Diagram sources: [`docs/diagrams/`](docs/diagrams) (`python3 scripts/render-diagrams.py`).</sub>
 
 ## The prompt, before and after
 
@@ -86,23 +57,7 @@ The old prompt is split into [`domains/hair/core.md`](domains/hair/core.md) (alw
 
 ## One message, step by step
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant P as Patient
-  participant C as Code
-  participant R as Router (Jev)
-  participant W as Writer (LLM)
-  P->>C: "Leaning toward Heva. Can I pay from my assessment?"
-  C->>R: guards pass · ask ~30 typed questions
-  R-->>C: link request · leans Heva · no escalation
-  C->>C: gate: answer · load payment + clinic skills
-  C->>C: fetch Heva packages + assessment link
-  C->>W: rules + facts as tokens + message
-  W-->>C: {{C1:package-count}}: {{P1:price+deposit}} … + link L1
-  C->>C: render tokens · checks · save Heva
-  C-->>P: "Heva Clinic has two packages: Silver is $3,000 USD …" + link
-```
+<img src="docs/img/sequence.svg" alt="One message step by step: guards, typed router answers, gate, skills and facts, writer with fact tokens, checks, and the rendered reply" width="100%">
 
 A message such as "charge my visa for the deposit" ends at the gate. The patient gets *"I can't take card payments here, so I'm bringing in a person from our team."*, with `escalate: true`, no writer call and no writes.
 

@@ -1,0 +1,15 @@
+sequenceDiagram
+  autonumber
+  participant P as Patient
+  participant C as Code
+  participant R as Router (Jev)
+  participant W as Writer (LLM)
+  P->>C: "Leaning toward Heva. Can I pay from my assessment?"
+  C->>R: guards pass, ask ~30 typed questions
+  R-->>C: link request, leans Heva, no escalation
+  C->>C: gate: answer, load payment + clinic skills
+  C->>C: fetch Heva packages + assessment link
+  C->>W: rules + facts as tokens + message
+  W-->>C: {{C1:package-count}}: {{P1:price+deposit}} … + link L1
+  C->>C: render tokens, checks, save Heva
+  C-->>P: "Heva Clinic has two packages: Silver is $3,000 USD …" + link

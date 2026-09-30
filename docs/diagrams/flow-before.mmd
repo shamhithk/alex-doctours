@@ -1,0 +1,9 @@
+flowchart LR
+  A["Patient SMS"] --> P["One system prompt<br/>41k tokens, 44 sections<br/>every rule, every message"]
+  P --> L["LLM + 14 tools<br/>decides, looks up, writes"]
+  L --> R["Reply"]
+  L -.->|no path| X["Hand off to a person"]
+  classDef old fill:#ffebe9,stroke:#cf222e,color:#1f2328
+  classDef none fill:#f6f8fa,stroke:#d1d9e0,color:#59636e
+  class P,L old
+  class X none
