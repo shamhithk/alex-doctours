@@ -2,7 +2,7 @@
  * EVAL ONLY. DEVELOPMENT / REGRESSION cases written from the packet's rules
  * (not from the expected replies): paraphrases, near-misses, adversarial and
  * multi-intent messages. Thresholds and router wording were tuned against these,
- * so they are NOT a generalization claim; see holdout.cases.ts for that.
+ * so they are NOT a generalization claim; see holdout-v2.cases.ts for that.
  */
 import type { EvalCase } from "./types.js";
 
