@@ -82,6 +82,9 @@ describe("policy gate", () => {
     expect(r.clarifyQuestion).toContain("Heva Clinic or Dr. Hakan Clinic");
     expect(gate(decision({ clinicMentioned: choice("ambiguous", 0.8), paymentMode: choice("link_request") }), g0, names).route).toBe("clarify");
   });
+  it("a low-confidence link reading does not trigger 'which clinic?'", () => {
+    expect(gate(decision({ clinicMentioned: choice("ambiguous", 0.8), paymentMode: choice("link_request", 0.53) }), g0, names).route).toBe("answer");
+  });
   it("a policy question is answered even if the clinic reference is ambiguous (same answer for every clinic)", () => {
     const r = gate(decision({ clinicMentioned: choice("ambiguous", 0.8), skills: { payment: 0.9 }, paymentMode: choice("policy_question") }), g0, names);
     expect(r.route).toBe("answer");

@@ -355,10 +355,26 @@ describe("selection writes need preference wording (holdout-v2 defect)", () => {
   it("a question that names a package saves nothing, even if the router reports a lean", async () => {
     const { trace } = await respond({ id: "s1", text: "what's actually included in heva's silver package?" }, deps(lean, new FakeLlm([draft])));
     expect(trace.commits ?? []).toEqual([]);
-    expect(trace.commitSkipped).toContain("router lean without any preference wording in the message; nothing saved");
+    expect(trace.commitSkipped).toContain("router lean on a question or request without preference wording; nothing saved");
   });
   it("an explicit choice is saved", async () => {
     const { trace } = await respond({ id: "s2", text: "I'll go with Silver at Heva. what's included?" }, deps(lean, new FakeLlm([draft])));
     expect(trace.commits).toEqual([expect.objectContaining({ tool: "updateUserClinicPreferences", ok: true })]);
+  });
+});
+
+describe("selection saves: statements and payment-link requests save, questions don't (regression from the v2 fix)", () => {
+  const HEVA_ID = HEVA;
+  const lean = (over = {}) => decision({ clinicLean: choice(HEVA_ID, 0.95), ...over });
+  it.each([
+    ["I think Heva Clinic is the one for me", lean(), true],
+    ["honestly heva is the one for me, the afro hair specialty is what sold me", lean(), true],
+    ["Send me the payment link for the Gold package at Heva", lean({ paymentMode: choice("link_request", 0.95), packageLean: choice("44444444-4444-4444-8444-444444444442", 0.95) }), true],
+    ["what's included in heva's silver package?", lean(), false],
+    ["send me heva's website", lean(), false],
+  ])("%j → saved: %s", async (text, d, saved) => {
+    const { planSelection } = await import("../src/commit.js");
+    const plan = planSelection(d, ctx.clinics.map((c) => c.id), text);
+    expect(Object.keys(plan.selection).length > 0).toBe(saved);
   });
 });
