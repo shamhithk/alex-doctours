@@ -16,13 +16,16 @@ export interface Options {
   gatherMode: "auto" | "always" | "never";
 }
 
-export const DEFAULT_OPTIONS: Options = {
-  writer: process.env.WRITER_MODEL ?? "deepseek",
-  router: (process.env.ROUTER as Options["router"]) ?? "auto",
-  classifier: process.env.CLASSIFIER_MODEL ?? CLASSIFIER_DEFAULT,
-  outputBattery: process.env.OUTPUT_BATTERY !== "0",
-  gatherMode: "auto",
-};
+/** Defaults read from the environment at CALL time (after loadEnv()), so .env settings apply. */
+export function getDefaultOptions(env: NodeJS.ProcessEnv = process.env): Options {
+  return {
+    writer: env.WRITER_MODEL ?? "deepseek",
+    router: (env.ROUTER as Options["router"]) ?? "auto",
+    classifier: env.CLASSIFIER_MODEL ?? CLASSIFIER_DEFAULT,
+    outputBattery: env.OUTPUT_BATTERY !== "0",
+    gatherMode: "auto",
+  };
+}
 
 export function loadEnv() {
   try {
