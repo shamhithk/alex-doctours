@@ -1,1 +1,5 @@
-{ "2026-09-30-f8e965a-dirty-": "measured on f8e965a plus uncommitted changes, before the second review's fixes; the holdout set used then is regression data now" }
+{
+  "2026-09-30-f8e965a-dirty-": "measured on f8e965a plus uncommitted changes, before the second review's fixes; the holdout set used then is regression data now",
+  "2026-09-30-324eedb-": "measured on 324eedb, before the fixes informed by holdout-v2; holdout-v2 is regression data now",
+  "2026-09-30-1dd5717-": "measured on 1dd5717, before the fixes informed by blind set v3 (which is regression data now)"
+}

@@ -1,0 +1,99 @@
+{
+  "writer": "deepseek",
+  "router": "jev (+llm:deepseek)",
+  "k": 3,
+  "cases": 44,
+  "runs": 132,
+  "passRate": "100.0%",
+  "passK": "44/44",
+  "passAny": "44/44",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "100.0%",
+  "falseEscalations": 0,
+  "nonEscalationCases": 30,
+  "writerOutcomes": {
+    "ok": 75,
+    "repaired": 12,
+    "none": 3
+  },
+  "promptTokensP50": 6781,
+  "latencyP50ms": 2449,
+  "latencyP95ms": 7515,
+  "costTotalUsd": 0.10532,
+  "costPerAnsweredUsd": 0.00094,
+  "costPerInputUsd": 0.0008,
+  "costPerSuccessfulAnswerUsd": 0.00117,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 0.2,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 2,
+    "leaves_question_unanswered": 3,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 4,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "haltReason": null,
+  "reliability": {
+    "firstDraftAcceptRate": "86.2%",
+    "repairRate": "13.8%",
+    "fallbackRate": "0.0%",
+    "falseEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "missedEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "routerRetries": 0,
+    "routerFallbacks": 0,
+    "routerFailures": 0,
+    "secondOpinionRate": "18.2%",
+    "unconfirmedEscalations": 0,
+    "guardViolations": {
+      "UNSOURCED_POLICY": 1,
+      "UNSOURCED_QUANTITY": 7,
+      "FALSE_ACTION": 1,
+      "UNBACKED_PERSISTENCE": 1,
+      "OFF_CHANNEL": 6,
+      "UNSOURCED_INCLUSION": 1
+    }
+  },
+  "costByStage": {
+    "router:jev": {
+      "calls": 120,
+      "costUsd": 0.0192,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "writer:deepseek:draft": {
+      "calls": 87,
+      "costUsd": 0.061849,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "output-battery": {
+      "calls": 87,
+      "costUsd": 0.001785,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "router:llm:deepseek": {
+      "calls": 24,
+      "costUsd": 0.016241,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "writer:deepseek:repair": {
+      "calls": 12,
+      "costUsd": 0.006265,
+      "unknownCalls": 0,
+      "estimated": false
+    }
+  },
+  "wallMs": 196238
+}

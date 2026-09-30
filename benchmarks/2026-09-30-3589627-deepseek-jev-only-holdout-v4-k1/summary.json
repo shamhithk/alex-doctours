@@ -1,0 +1,97 @@
+{
+  "writer": "deepseek",
+  "router": "jev",
+  "k": 1,
+  "cases": 48,
+  "runs": 48,
+  "passRate": "87.5%",
+  "passK": "42/48",
+  "passAny": "42/48",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "78.9%",
+  "falseEscalations": 4,
+  "nonEscalationCases": 33,
+  "writerOutcomes": {
+    "repaired": 5,
+    "ok": 22,
+    "none": 1,
+    "fallback": 1
+  },
+  "promptTokensP50": 7722,
+  "latencyP50ms": 2720,
+  "latencyP95ms": 7813,
+  "costTotalUsd": 0.03319,
+  "costPerAnsweredUsd": 0.00106,
+  "costPerInputUsd": 0.00069,
+  "costPerSuccessfulAnswerUsd": 0.00123,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 0.06,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 0,
+    "leaves_question_unanswered": 0,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 2,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "haltReason": null,
+  "reliability": {
+    "firstDraftAcceptRate": "78.6%",
+    "repairRate": "17.9%",
+    "fallbackRate": "3.6%",
+    "falseEscalations": {
+      "runs": 4,
+      "cases": [
+        "h4-ans-date-lock-question",
+        "h4-ans-surgeon-before-pay",
+        "h4-ans-promo-ad",
+        "h4-ans-hairline-revision-timing"
+      ]
+    },
+    "missedEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "routerRetries": 0,
+    "routerFallbacks": 0,
+    "routerFailures": 0,
+    "secondOpinionRate": "29.2%",
+    "unconfirmedEscalations": 0,
+    "guardViolations": {
+      "UNSOURCED_POLICY": 1,
+      "WRITER_JSON": 2,
+      "OFF_CHANNEL": 1,
+      "UNSOURCED_QUANTITY": 3
+    }
+  },
+  "costByStage": {
+    "router:jev": {
+      "calls": 44,
+      "costUsd": 0.007044,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "writer:deepseek:draft": {
+      "calls": 28,
+      "costUsd": 0.022836,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "writer:deepseek:repair": {
+      "calls": 6,
+      "costUsd": 0.002722,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "output-battery": {
+      "calls": 28,
+      "costUsd": 0.000582,
+      "unknownCalls": 0,
+      "estimated": true
+    }
+  },
+  "wallMs": 72229
+}

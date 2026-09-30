@@ -1,0 +1,13 @@
+{
+  "variant": "monolith-baseline",
+  "writer": "deepseek",
+  "cases": 48,
+  "passRate": "33.3%",
+  "escalationRecall": "53.3%",
+  "escalationPrecision": "100.0%",
+  "invalidReplies": 17,
+  "inputTokensP50": 159667,
+  "latencyP50ms": 12940,
+  "costTotalUsd": 0.1457,
+  "skippedAtSpendCap": 0
+}

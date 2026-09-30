@@ -1,0 +1,95 @@
+{
+  "writer": "gemini",
+  "router": "jev (+llm:deepseek)",
+  "k": 1,
+  "cases": 43,
+  "runs": 43,
+  "passRate": "93.0%",
+  "passK": "40/43",
+  "passAny": "40/43",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "100.0%",
+  "falseEscalations": 0,
+  "nonEscalationCases": 29,
+  "writerOutcomes": {
+    "ok": 26,
+    "none": 1,
+    "repaired": 2
+  },
+  "promptTokensP50": 8305,
+  "latencyP50ms": 1998,
+  "latencyP95ms": 4767,
+  "costTotalUsd": 0.21605,
+  "costPerAnsweredUsd": 0.00721,
+  "costPerInputUsd": 0.00502,
+  "costPerSuccessfulAnswerUsd": 0.00831,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 0.25,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 2,
+    "leaves_question_unanswered": 2,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 1,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "haltReason": null,
+  "reliability": {
+    "firstDraftAcceptRate": "92.9%",
+    "repairRate": "7.1%",
+    "fallbackRate": "0.0%",
+    "falseEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "missedEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "routerRetries": 0,
+    "routerFallbacks": 0,
+    "routerFailures": 0,
+    "secondOpinionRate": "23.3%",
+    "unconfirmedEscalations": 0,
+    "guardViolations": {
+      "REDUNDANT_TOKENS": 1,
+      "MEMORY_PROMISE_UNSCHEDULED": 1
+    }
+  },
+  "costByStage": {
+    "router:jev": {
+      "calls": 40,
+      "costUsd": 0.006367,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "router:llm:deepseek": {
+      "calls": 10,
+      "costUsd": 0.006531,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "writer:gemini:draft": {
+      "calls": 28,
+      "costUsd": 0.186847,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "output-battery": {
+      "calls": 28,
+      "costUsd": 0.000569,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "writer:gemini:repair": {
+      "calls": 2,
+      "costUsd": 0.015737,
+      "unknownCalls": 0,
+      "estimated": false
+    }
+  },
+  "wallMs": 44644
+}

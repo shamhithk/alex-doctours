@@ -1,0 +1,22 @@
+{
+  "variant": "monolith-baseline",
+  "commit": "1dd5717",
+  "dirtyWorkingTree": false,
+  "date": "2026-09-30T10:56:45.190Z",
+  "set": "holdout-v3",
+  "writer": {
+    "key": "deepseek",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "reasoning": "low",
+    "json": "object",
+    "price": {
+      "input": 0.3,
+      "output": 1.2,
+      "cachedInput": 0.006
+    }
+  },
+  "spendCapUsd": 0.2,
+  "concurrency": 2,
+  "node": "v22.23.1"
+}

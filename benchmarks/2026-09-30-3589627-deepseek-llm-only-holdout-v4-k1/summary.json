@@ -1,0 +1,90 @@
+{
+  "writer": "deepseek",
+  "router": "llm:deepseek",
+  "k": 1,
+  "cases": 48,
+  "runs": 48,
+  "passRate": "95.8%",
+  "passK": "46/48",
+  "passAny": "46/48",
+  "escalationRecall": "100.0%",
+  "escalationPrecision": "100.0%",
+  "falseEscalations": 0,
+  "nonEscalationCases": 33,
+  "writerOutcomes": {
+    "ok": 26,
+    "repaired": 7
+  },
+  "promptTokensP50": 6487,
+  "latencyP50ms": 4936,
+  "latencyP95ms": 10244,
+  "costTotalUsd": 0.06678,
+  "costPerAnsweredUsd": 0.0018,
+  "costPerInputUsd": 0.00139,
+  "costPerSuccessfulAnswerUsd": 0.00215,
+  "rowsWithUnknownCost": 0,
+  "costIncludesEstimates": true,
+  "spendCapUsd": 0.1,
+  "skippedAtSpendCap": 0,
+  "outputBatteryFlags": {
+    "promises_offchannel_action": 1,
+    "leaves_question_unanswered": 2,
+    "pressure_or_upsell": 0,
+    "unprompted_financing": 2,
+    "asks_multiple_questions": 0
+  },
+  "providerFailovers": 0,
+  "internalErrors": 0,
+  "haltReason": null,
+  "reliability": {
+    "firstDraftAcceptRate": "78.8%",
+    "repairRate": "21.2%",
+    "fallbackRate": "0.0%",
+    "falseEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "missedEscalations": {
+      "runs": 0,
+      "cases": []
+    },
+    "routerRetries": 0,
+    "routerFallbacks": 0,
+    "routerFailures": 0,
+    "secondOpinionRate": "18.8%",
+    "unconfirmedEscalations": 0,
+    "guardViolations": {
+      "UNSOURCED_QUANTITY": 4,
+      "WRITER_JSON": 1,
+      "MEMORY_PROMISE_UNSCHEDULED": 1,
+      "HEAD_COVERING": 1
+    }
+  },
+  "costByStage": {
+    "router:llm:deepseek": {
+      "calls": 44,
+      "costUsd": 0.029662,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "writer:deepseek:draft": {
+      "calls": 33,
+      "costUsd": 0.03229,
+      "unknownCalls": 0,
+      "estimated": false
+    },
+    "output-battery": {
+      "calls": 33,
+      "costUsd": 0.00069,
+      "unknownCalls": 0,
+      "estimated": true
+    },
+    "writer:deepseek:repair": {
+      "calls": 7,
+      "costUsd": 0.004133,
+      "unknownCalls": 0,
+      "estimated": false
+    }
+  },
+  "wallMs": 120892
+}
