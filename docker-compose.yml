@@ -1,0 +1,14 @@
+# Optional observability UI. Start with:  docker compose up -d phoenix
+# Then set PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006 in .env and open http://localhost:6006
+services:
+  phoenix:
+    image: arizephoenix/phoenix:version-20.16.0
+    ports:
+      - "6006:6006" # UI + OTLP/HTTP collector (/v1/traces)
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      - phoenix-data:/mnt/data
+    restart: unless-stopped
+volumes:
+  phoenix-data:

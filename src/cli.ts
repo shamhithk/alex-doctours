@@ -8,10 +8,11 @@
  */
 import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { InputSchema } from "./contracts.js";
-import { buildDeps, DEFAULT_OPTIONS, loadEnv, type Options } from "./deps.js";
+import { buildDeps, getDefaultOptions, loadEnv, type Options } from "./deps.js";
 import { respond, type Trace } from "./workflow.js";
 import { buildQuestions } from "./decision/questions.js";
 import { mapLimit } from "./util.js";
+import { otelFromEnv } from "./observability/otel.js";
 
 function parseArgs(argv: string[]) {
   const a: Record<string, string> = {};
@@ -39,7 +40,7 @@ async function main() {
     process.exit(2);
   }
   const opts: Options = {
-    ...DEFAULT_OPTIONS,
+    ...getDefaultOptions(),
     ...(args.writer ? { writer: args.writer } : {}),
     ...(args.router ? { router: args.router as Options["router"] } : {}),
     ...(args["no-battery"] ? { outputBattery: false } : {}),
@@ -47,9 +48,12 @@ async function main() {
   const deps = buildDeps(opts);
   const qs = buildQuestions(deps.domain, deps.ctx);
   console.error(`writer=${opts.writer} router=${deps.routerName} items=${parsed.data.length}`);
+  const otel = otelFromEnv();
+  if (otel) console.error(`tracing: exporting spans to ${process.env.PHOENIX_COLLECTOR_ENDPOINT ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT}`);
   const concurrency = Number(args.concurrency ?? 4);
   const results = await mapLimit(parsed.data, concurrency, async (item) => {
     const r = await respond(item, deps, qs);
+    otel?.export(r.trace);
     console.error(`  ${item.id}: route=${r.trace.route}${r.trace.category ? `/${r.trace.category}` : ""} ${r.trace.latencyMs}ms`);
     return r;
   });
@@ -61,6 +65,7 @@ async function main() {
     writeFileSync(args.trace, "");
     for (const r of results) appendFileSync(args.trace, JSON.stringify(r.trace satisfies Trace) + "\n");
   }
+  await otel?.shutdown();
 }
 
 main().catch((e) => {

@@ -11,9 +11,16 @@
     "reply": "tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "eval": "tsx eval/run.ts"
+    "eval": "tsx eval/run.ts",
+    "dashboard": "tsx scripts/dashboard.ts",
+    "bench:table": "tsx scripts/bench-table.ts"
   },
   "dependencies": {
+    "@arizeai/openinference-semantic-conventions": "^2.12.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.222.0",
+    "@opentelemetry/resources": "^2.11.0",
+    "@opentelemetry/sdk-trace-base": "^2.11.0",
     "gray-matter": "^4.0.3",
     "zod": "^4.6.5"
   },
