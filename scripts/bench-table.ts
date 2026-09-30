@@ -17,8 +17,8 @@ const supersededReason = (d: string) => Object.entries(superseded).find(([prefix
 
 const usd = (n: number | undefined | null) => (n === undefined || n === null ? "–" : `$${n.toFixed(5)}`);
 const ms = (n: number | undefined) => (n === undefined ? "–" : `${(n / 1000).toFixed(1)} s`);
-/** holdout-v1 was named "holdout" while it was the frozen set. */
-const setLabel = (set: string) => (set === "holdout" ? "holdout-v1 (then frozen)" : set);
+/** Earlier frozen sets under their names at the time; both are regression data now. */
+const setLabel = (set: string) => (set === "holdout" ? "holdout-v1 (then frozen)" : set === "holdout-v2" ? "holdout-v2 (then frozen)" : set);
 
 const runs = dirs.map((d) => ({ d, c: read(d, "config.json"), s: read(d, "summary.json") }));
 const pipeline = runs.filter((r) => r.c.variant !== "monolith-baseline");
@@ -110,9 +110,9 @@ if (current.length) {
   if (st.length) out.push("", "**Cost by stage** (average per input; calls counted across all runs):", "", ...st);
 } else out.push("_No current measurements yet: the runs below predate the latest fixes._");
 if (baselines.length) out.push("", "**Original monolithic prompt, same scorer:**", "", ...baselineTable(baselines));
-if (old.length) {
-  const reasons = [...new Set(old.map((r) => supersededReason(r.d)))];
-  out.push("", `**Superseded runs** (${reasons.join("; ")}):`, "", ...resultsTable(old));
+// Superseded runs, newest first, one table per reason.
+for (const reason of [...new Set(old.map((r) => supersededReason(r.d)))].reverse()) {
+  out.push("", `**Superseded runs** (${reason}):`, "", ...resultsTable(old.filter((r) => supersededReason(r.d) === reason)));
 }
 const block = dirs.length ? out.join("\n") : "_No published benchmarks yet. Run `npx tsx eval/run.ts ... --publish`._";
 
