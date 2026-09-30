@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 
 /**
  * Each line of eval/HOLDOUT.sha256 is "<sha256>  <path>", recorded before that set's first run.
- * holdout-v1 (exposed by the second review) and holdout-v2 (its failures informed fixes) are regression
- * data now; their checksums stay pinned so earlier benchmarks remain reproducible. holdout-v3 is the
- * frozen set for generalization claims.
+ * holdout-v1 (exposed by the second review), holdout-v2 and holdout-v3 (their failures informed fixes)
+ * are regression data now; their checksums stay pinned so earlier benchmarks remain reproducible.
+ * holdout-v4 is the frozen set for generalization claims.
  */
 const entries = readFileSync("eval/HOLDOUT.sha256", "utf8")
   .split("\n")
@@ -15,7 +15,7 @@ const entries = readFileSync("eval/HOLDOUT.sha256", "utf8")
 
 describe("frozen evaluation sets", () => {
   it("records every holdout generation", () => {
-    expect(entries.map(([, path]) => path)).toEqual(["eval/holdout-v1.cases.ts", "eval/holdout-v2.cases.ts", "eval/holdout-v3.cases.ts"]);
+    expect(entries.map(([, path]) => path)).toEqual(["eval/holdout-v1.cases.ts", "eval/holdout-v2.cases.ts", "eval/holdout-v3.cases.ts", "eval/holdout-v4.cases.ts"]);
   });
   it.each(entries.map(([hash, path]) => [path, hash] as const))("%s matches the checksum recorded before its first run", (path, recorded) => {
     const actual = createHash("sha256").update(readFileSync(path)).digest("hex");
