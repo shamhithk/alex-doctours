@@ -6,7 +6,8 @@
  *   npm run reply -- --input messages.json [--output replies.json] [--trace traces.jsonl]
  *                    [--writer deepseek|gemini|qwen] [--router auto|jev|laya|llm] [--concurrency 4]
  */
-import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { InputSchema } from "./contracts.js";
 import { buildDeps, getDefaultOptions, loadEnv, type Options } from "./deps.js";
 import { respond, type Trace } from "./workflow.js";
@@ -59,6 +60,8 @@ async function main() {
   });
   const replies = results.map((r) => r.reply);
   const json = JSON.stringify(replies, null, 2);
+  // Create output folders (e.g. traces/, which is gitignored) so a fresh clone just works.
+  for (const f of [args.output, args.trace]) if (f) mkdirSync(dirname(f), { recursive: true });
   if (args.output) writeFileSync(args.output, json + "\n");
   else process.stdout.write(json + "\n");
   if (args.trace) {
