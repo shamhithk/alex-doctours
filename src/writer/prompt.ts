@@ -43,12 +43,12 @@ export const WRITER_SCHEMA: Record<string, unknown> = {
 };
 
 const EXAMPLE = {
-  reply: "Clinic A has two packages. Basic is {{F2}} with a {{F3}} deposit, and Plus is {{F5}} with a {{F6}} deposit. You can see both on the clinic page using the link below.",
+  reply: "{{C9:package-count}}. {{P8:price+deposit}}, and {{P9:price+deposit}}. You can see both on the clinic page using the link below.",
   link_ids: ["L1"],
   attachment_ids: [],
   claims: [
-    { text: "Basic price and deposit", sources: ["F2", "F3"] },
-    { text: "Plus price and deposit", sources: ["F5", "F6"] },
+    { text: "package count", sources: ["C9:package-count"] },
+    { text: "prices and deposits", sources: ["P8:price+deposit", "P9:price+deposit"] },
   ],
   intent: "answer package pricing",
   should_follow_up: false,
@@ -97,7 +97,7 @@ export function buildWriterSystem(domain: Domain, sel: Selection, ctx: PatientCo
     "# OTHER TOPICS (rules not loaded this turn; if the message needs one of these, answer only what the loaded rules and FACTS support)",
     ...others,
     "",
-    "# FACTS (verified by tools this turn; the ONLY source for prices, deposits, package contents and clinic facts)",
+    "# FACTS (verified by tools this turn). Each line is a clause token and exactly what it renders to.",
     ledger.factsBlock(),
     "",
     "# LINKS (the ONLY URLs you may send)",
@@ -112,14 +112,15 @@ export function buildWriterSystem(domain: Domain, sel: Selection, ctx: PatientCo
     "- reply: the SMS text, plain text, first person as the coordinator. Answer every question the patient asked, then stop.",
     "- Use only the FACTS needed to answer what was asked. Do not add package extras, hotel nights, doctor notes, opinions ('a strong pick') or links the patient did not ask about, unless a loaded rule requires them.",
     "- Send a link only when the patient asked for one, asked where or how to pay or book, or a loaded rule says to include it.",
-    "- Money: write every price or deposit ONLY as a fact token like {{F4}}; never type a dollar amount yourself. Put the package or clinic name in the same sentence as its token.",
+    "- Facts: state prices, deposits, how many packages a clinic has, what a package includes, bookable days, doctors, clinic specialty/location and graft estimates ONLY with clause tokens from FACTS, e.g. {{P2:price+deposit}}. A token renders a complete clause INCLUDING the package or clinic name (see the preview after the arrow), so do not repeat the name around it. Never type a number, amount or quantity for these facts yourself, not even one the patient quoted.",
+    "- Use each fact once: don't combine tokens that say the same thing (package-count with packages; price or deposit with price+deposit), and don't restate a token's clause in your own words. To list prices, write e.g. \"{{C1:package-count}}: {{P1:price+deposit}}, and {{P2:price+deposit}}.\"",
     "- Links: never type a URL. When sending a link, say \"using the link below\" and put its id (e.g. \"L2\") in link_ids; links are appended as the last lines automatically.",
     "- Attachments: ids from ATTACHMENTS in attachment_ids (max 3), only when the patient asks for their photos.",
-    "- claims: every factual statement in reply with its sources (F#, L#, or rule ids such as payment.assessment-pay).",
+    "- claims: every factual statement in reply with its sources (clause tokens like P2:price+deposit, link ids like L1, or rule ids such as payment.assessment-book).",
     "- should_follow_up / follow_up_timing: true with a human-readable interval (e.g. \"1 month\") only when a concrete check-in was set; otherwise false and null.",
     "- memory: only fields that changed this turn; null for the rest.",
     "- unsupported: null normally. If the patient asks you to do something that no loaded rule, fact or link can accomplish, set a short reason and leave reply empty.",
-    "Example of the shape (content is illustrative only):",
+    "Example of the shape (entity ids and content are illustrative only; use the ids in FACTS):",
     JSON.stringify(EXAMPLE),
   ].join("\n");
   return { system, approxTokens: Math.round(system.length / 4) };

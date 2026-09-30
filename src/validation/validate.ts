@@ -1,4 +1,5 @@
 import type { Ledger } from "../evidence/ledger.js";
+import { collapseDigits } from "../guards/input.js";
 
 export interface WriterOutput {
   reply: string;
@@ -26,7 +27,9 @@ export interface Rendered {
 }
 
 const URL_RE = /https?:\/\/\S+|www\.\S+|\b[a-z0-9-]+\.(?:com|net|org|io)\/\S*/gi;
-const TOKEN_RE = /\{\{\s*(F\d+)\s*\}\}/g;
+/** Clause tokens: {{P2:price+deposit}}, {{C1:specialty}}, {{AS:graft-range}}. */
+export const TOKEN_RE = /\{\{\s*([A-Z]{1,3}\d*)\s*:\s*([a-z+-]+)\s*\}\}/g;
+const ANY_BRACES = /\{\{[^}]*\}\}/g;
 
 export function coerceWriterOutput(raw: any): { out?: WriterOutput; violations: Violation[] } {
   if (!raw || typeof raw !== "object") return { violations: [{ code: "WRITER_JSON", severity: "hard", detail: "Output was not a json object." }] };
@@ -48,14 +51,18 @@ export function coerceWriterOutput(raw: any): { out?: WriterOutput; violations: 
 
 export function render(out: WriterOutput, ledger: Ledger): { rendered: Rendered; violations: Violation[] } {
   const v: Violation[] = [];
-  let body = out.reply.replace(TOKEN_RE, (_m, id: string) => {
-    const f = ledger.fact(id);
-    if (!f) {
-      v.push({ code: "UNKNOWN_FACT", severity: "hard", detail: `{{${id}}} is not in FACTS.` });
+  let body = out.reply.replace(TOKEN_RE, (_m, ref: string, kind: string, offset: number, whole: string) => {
+    const clause = ledger.renderClause(ref, kind);
+    if (clause === null) {
+      v.push({ code: "UNKNOWN_FACT", severity: "hard", detail: `{{${ref}:${kind}}} is not an available clause.` });
       return "";
     }
-    return f.render;
+    const before = whole.slice(0, offset);
+    const startsSentence = /(^|[.!?]\s+|\n\s*)$/.test(before);
+    return startsSentence ? clause.charAt(0).toUpperCase() + clause.slice(1) : clause;
   });
+  if (ANY_BRACES.test(body)) v.push({ code: "UNKNOWN_FACT", severity: "hard", detail: "Malformed fact token." });
+  ANY_BRACES.lastIndex = 0;
   // Light markdown clean-up (SMS is plain text).
   const md = /\*\*|__|^#+\s|^\s*[-*]\s+/m.test(body);
   if (md) v.push({ code: "MARKDOWN", severity: "soft", detail: "Markdown removed." });
@@ -95,6 +102,15 @@ export interface ValidateContext {
 
 const ASKS_FOR_LINK = /\b(?:links?|website|site|web\s?page|page|url|where\s+(?:can|do)\s+i|how\s+(?:can|do)\s+i\s+(?:pay|book|see)|pay\s+(?:from|through|via|online)|book)\b/i;
 
+const NUMBER = String.raw`(?:\d[\d,]*(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|a hundred|hundred)`;
+const QUANTITY_PATTERNS: RegExp[] = [
+  /[$€£]\s?\d[\d,]*(?:\.\d+)?/gi,
+  /\b\d[\d,]*(?:\.\d+)?\s?(?:usd|eur|gbp|dollars?|euros?|pounds?|lira|tl)\b/gi,
+  /\b(?:usd|eur|gbp)\s?\d[\d,]*(?:\.\d+)?/gi,
+  new RegExp(String.raw`\b${NUMBER}\s+(?:extra\s+|more\s+|additional\s+|hotel\s+)?(?:nights?|grafts?|days?|weeks?|months?|years?|hours?|miles?|minutes?|sessions?|packages?|installments?|payments?)\b`, "gi"),
+  /\b\d+(?:\.\d+)?\s?(?:%|percent)/gi,
+];
+
 const OFF_CHANNEL: [RegExp, string][] = [
   [/\bI(?:'ll| will)\s+(?:send|email|forward|pass)\b/i, "promises to send something later"],
   [/\bI(?:'ll| will)\s+get\s+back\s+to\s+you\b/i, "promises to get back later"],
@@ -116,24 +132,51 @@ export function validate(out: WriterOutput, r: Rendered, c: ValidateContext): Vi
   if (URL_RE.test(raw)) v.push({ code: "URL_IN_TEXT", severity: "hard", detail: "Typed a URL; use link_ids instead." });
   URL_RE.lastIndex = 0;
 
-  // Money must come from fact tokens (or a figure stated verbatim in a loaded rule, e.g. a $25 fee).
-  const typedMoney = raw.replace(TOKEN_RE, "").match(/\$\s?\d[\d,]*(?:\.\d+)?/g) ?? [];
-  for (const m of typedMoney) {
-    if (!c.loadedRulesText.includes(m.replace(/\s/g, ""))) {
-      v.push({ code: "UNSOURCED_MONEY", severity: "hard", detail: `Typed ${m}; use a {{F#}} token.` });
+  // Quantity guard: any money amount or unit quantity the writer typed itself must be a figure
+  // stated verbatim in a loaded rule (e.g. "$25", "24 hours", "two weeks"). Commercial facts come
+  // only from clause tokens. Numbers quoted by the patient are never authority.
+  const own = raw.replace(TOKEN_RE, " ");
+  const rules = c.loadedRulesText.toLowerCase().replace(/\s+/g, " ");
+  for (const re of QUANTITY_PATTERNS) {
+    for (const m of own.matchAll(re)) {
+      const phrase = m[0].toLowerCase().replace(/\s+/g, " ").trim();
+      if (!rules.includes(phrase)) v.push({ code: "UNSOURCED_QUANTITY", severity: "hard", detail: `Typed "${m[0].trim()}"; use a clause token from FACTS.` });
     }
   }
-  // Attribution: a fact token must share a sentence with its package/clinic name.
-  for (const sentence of raw.split(/(?<=[.!?])\s+/)) {
-    for (const m of sentence.matchAll(TOKEN_RE)) {
-      const f = c.ledger.fact(m[1]);
-      if (f && f.anchors.length && !f.anchors.some((a) => sentence.toLowerCase().includes(a.toLowerCase()))) {
-        v.push({ code: "ATTRIBUTION", severity: "hard", detail: `{{${m[1]}}} (${f.label}) is not named in its sentence.` });
-      }
+  // Redundant tokens: two clauses that state the same fact, or a list clause used as a lead-in.
+  const used = [...raw.matchAll(TOKEN_RE)].map((m) => `${m[1]}:${m[2]}`);
+  const has = (t: string) => used.includes(t);
+  const seen = new Set<string>();
+  for (const t of used) {
+    const [ref, kind] = t.split(":");
+    const clash =
+      seen.has(t) ||
+      (kind === "packages" && has(`${ref}:package-count`)) ||
+      ((kind === "price" || kind === "deposit") && has(`${ref}:price+deposit`));
+    if (clash) v.push({ code: "REDUNDANT_TOKENS", severity: "hard", detail: `{{${t}}} repeats a fact another token already states.` });
+    seen.add(t);
+  }
+  if (/\{\{[A-Z]+\d*:packages\}\}\s*:/.test(raw)) {
+    v.push({ code: "REDUNDANT_TOKENS", severity: "hard", detail: "packages already lists the names; to list prices use package-count followed by price clauses." });
+  }
+  // Claim sources must exist (soft: tokens already guarantee the rendered facts).
+  const known = new Set<string>([
+    ...c.ledger.allEntities().map((e) => e.ref),
+    ...c.ledger.availableClauses().flatMap((x) => [x.token.slice(2, -2), `${x.ref}:${x.kind}`]),
+    ...c.ledger.links.map((l) => l.id),
+    ...c.ledger.attachments.map((a) => a.id),
+    ...[...c.loadedRulesText.matchAll(/\[([a-z0-9][a-z0-9.\-_]*)\]/g)].map((m) => m[1]),
+    "core",
+  ]);
+  for (const claim of out.claims) {
+    for (const src of claim.sources) {
+      const norm = src.replace(/^\{\{|\}\}$/g, "").replace(/^\[|\]$/g, "");
+      if (!known.has(norm)) v.push({ code: "UNKNOWN_CLAIM_SOURCE", severity: "soft", detail: `Claim source "${src}" does not exist this turn.` });
     }
   }
+  const flat = collapseDigits(r.text);
   for (const d of c.neverEcho) {
-    if (r.text.includes(d)) v.push({ code: "ECHOED_SENSITIVE", severity: "hard", detail: "Repeated card digits." });
+    if (flat.includes(d)) v.push({ code: "ECHOED_SENSITIVE", severity: "hard", detail: "Repeated card digits." });
   }
   for (const [re, why] of OFF_CHANNEL) {
     if (re.test(r.body)) v.push({ code: "OFF_CHANNEL", severity: "hard", detail: `Reply ${why}.` });

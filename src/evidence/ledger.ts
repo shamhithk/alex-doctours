@@ -1,21 +1,55 @@
 import type { ToolRecord } from "../tools/executor.js";
 
 /**
- * Evidence ledger for one turn. Every fact the writer may state and every URL
- * it may send is registered here with the tool call that produced it. The
- * writer references facts as {{F#}} and links as L#; code renders the values.
+ * Evidence ledger for one turn: typed entities built from tool results.
+ * The writer never states a commercial fact in its own words. It references a
+ * CLAUSE TOKEN bound to an entity, e.g. {{P2:price+deposit}}, and code renders
+ * the entity name and the value together ("Gold is $4,500 USD with a $600
+ * deposit"). A price cannot be attached to the wrong package because the name
+ * and the number are produced by the same function from the same record.
  */
-export interface Fact {
+
+export interface PackageEntity {
   id: string;
-  key: string;
-  entity: { clinicId?: string; clinicName?: string; packageId?: string; packageName?: string };
-  label: string;
-  render: string;
+  kind: "package";
+  ref: string; // P1, P2 ...
+  name: string;
+  clinicId: string;
+  clinicName: string;
+  price: number;
+  deposit: number;
+  currency: string;
+  included: { name: string; qty: number; unit: string }[];
+  weekdays: string[];
+  note: string | null;
   source: string;
-  /** Names that must appear in the same sentence when the fact is used (attribution check). */
-  anchors: string[];
-  money?: number;
 }
+
+export interface ClinicEntity {
+  id: string;
+  kind: "clinic";
+  ref: string; // C1, C2 ...
+  name: string;
+  location?: string;
+  specialty?: string;
+  practiceType?: string;
+  bestFor?: string[];
+  packageRefs: string[];
+  doctors?: { name: string; title: string }[];
+  ranking?: number;
+  sources: string[];
+}
+
+export interface AssessmentEntity {
+  kind: "assessment";
+  ref: "AS";
+  graftLow?: number;
+  graftHigh?: number;
+  shareStatus?: string;
+  source: string;
+}
+
+export type Entity = PackageEntity | ClinicEntity | AssessmentEntity;
 
 export interface LinkRef {
   id: string;
@@ -31,21 +65,83 @@ export interface AttachmentRef {
   source: string;
 }
 
-const money = (n: number, withCurrency: boolean, currency = "USD") =>
-  `$${n.toLocaleString("en-US")}${withCurrency ? ` ${currency}` : ""}`;
+export interface ContextFact {
+  key: string;
+  text: string;
+  source: string;
+}
+
+const WEEKDAY: Record<string, string> = { MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday", SUN: "Sunday" };
+const NUM_WORD = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const money = (n: number, currency = "USD", withCode = true) =>
+  `${currency === "USD" ? "$" : currency === "EUR" ? "€" : currency === "GBP" ? "£" : ""}${n.toLocaleString("en-US")}${withCode ? ` ${currency}` : ""}`;
+const count = (n: number) => NUM_WORD[n] ?? String(n);
+const list = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+const plural = (n: number, unit: string) => `${unit}${n === 1 ? "" : "s"}`;
+const sentenceCase = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+/** Clause kinds available per entity kind: kind -> renderer. */
+const PACKAGE_CLAUSES: Record<string, (p: PackageEntity) => string | null> = {
+  name: (p) => p.name,
+  price: (p) => `${p.name} is ${money(p.price, p.currency)}`,
+  deposit: (p) => `the ${p.name} deposit is ${money(p.deposit, p.currency, false)}`,
+  "price+deposit": (p) => `${p.name} is ${money(p.price, p.currency)} with a ${money(p.deposit, p.currency, false)} deposit`,
+  inclusions: (p) => (p.included.length ? `${p.name} includes ${list(p.included.map((a) => `${a.qty} ${a.name.toLowerCase()} ${plural(a.qty, a.unit)}`))}` : null),
+  weekdays: (p) => (p.weekdays.length ? `${p.name} can be booked on ${list(p.weekdays.map((d) => WEEKDAY[d] ?? d))}` : null),
+  note: (p) => (p.note ? `on ${p.name}, ${sentenceCase(p.note.replace(/\.$/, ""))}` : null),
+};
+const CLINIC_CLAUSES: Record<string, (c: ClinicEntity, l: Ledger) => string | null> = {
+  name: (c) => c.name,
+  location: (c) => (c.location ? `${c.name} is in ${c.location}` : null),
+  specialty: (c) => (c.specialty ? `${c.name} specializes in ${c.specialty.toLowerCase().replace(/^afro/, "Afro")}` : null),
+  "practice-type": (c) => (c.practiceType ? `${c.name} is ${sentenceCase(c.practiceType)}` : null),
+  "best-for": (c) => (c.bestFor?.length ? `${c.name} is best for ${list(c.bestFor)}` : null),
+  "package-count": (c) => (c.packageRefs.length ? `${c.name} has ${count(c.packageRefs.length)} ${plural(c.packageRefs.length, "package")}` : null),
+  packages: (c, l) =>
+    c.packageRefs.length
+      ? `${c.name} has ${count(c.packageRefs.length)} ${plural(c.packageRefs.length, "package")}: ${list(c.packageRefs.map((r) => (l.entity(r) as PackageEntity).name))}`
+      : null,
+  doctors: (c) =>
+    c.doctors?.length
+      ? c.doctors.length === 1
+        ? `${c.doctors[0].name} is the ${c.doctors[0].title.toLowerCase()} at ${c.name}`
+        : `${c.name}'s doctors are ${list(c.doctors.map((d) => `${d.name} (${d.title.toLowerCase()})`))}`
+      : null,
+};
+const ASSESSMENT_CLAUSES: Record<string, (a: AssessmentEntity) => string | null> = {
+  "graft-range": (a) =>
+    a.graftLow && a.graftHigh ? `your assessment estimates ${a.graftLow.toLocaleString("en-US")} to ${a.graftHigh.toLocaleString("en-US")} grafts` : null,
+};
 
 export class Ledger {
-  facts: Fact[] = [];
+  private entities = new Map<string, Entity>();
+  private byId = new Map<string, string>();
   links: LinkRef[] = [];
   attachments: AttachmentRef[] = [];
+  context: ContextFact[] = [];
   notes: string[] = [];
-  private seen = new Set<string>();
 
-  private addFact(f: Omit<Fact, "id">) {
-    const k = `${f.key}|${f.entity.clinicId ?? ""}|${f.entity.packageId ?? ""}|${f.render}`;
-    if (this.seen.has(k)) return;
-    this.seen.add(k);
-    this.facts.push({ ...f, id: `F${this.facts.length + 1}` });
+  entity(ref: string): Entity | undefined {
+    return this.entities.get(ref);
+  }
+  allEntities(): Entity[] {
+    return [...this.entities.values()];
+  }
+  refFor(id: string): string | undefined {
+    return this.byId.get(id);
+  }
+
+  private clinic(id: string, name: string, source: string): ClinicEntity {
+    const ref = this.byId.get(id);
+    if (ref) {
+      const c = this.entities.get(ref) as ClinicEntity;
+      if (!c.sources.includes(source)) c.sources.push(source);
+      return c;
+    }
+    const c: ClinicEntity = { id, kind: "clinic", ref: `C${[...this.entities.values()].filter((e) => e.kind === "clinic").length + 1}`, name, packageRefs: [], sources: [source] };
+    this.entities.set(c.ref, c);
+    this.byId.set(id, c.ref);
+    return c;
   }
 
   addLink(url: string, label: string, source: string) {
@@ -55,7 +151,7 @@ export class Ledger {
 
   private addAttachment(url: string, label: string, source: string) {
     if (this.attachments.some((a) => a.url === url)) return;
-    this.attachments.push({ id: `A${this.attachments.length + 1}`, url, label, source });
+    this.attachments.push({ id: `IMG${this.attachments.length + 1}`, url, label, source });
   }
 
   ingest(rec: ToolRecord) {
@@ -71,156 +167,93 @@ export class Ledger {
     }
     switch (rec.tool) {
       case "getClinicPackages": {
-        const clinicName: string = r.clinicName;
-        const clinicId = (r.packages?.[0]?.clinicId as string) ?? undefined;
-        for (const flag of r.clinic_flags ?? []) {
-          this.addFact({
-            key: `clinic.flag.${flag.name}`,
-            entity: { clinicId, clinicName },
-            label: `${clinicName} · ${flag.name}`,
-            render: String(flag.value),
-            source: src,
-            anchors: [clinicName],
-          });
+        const clinicId = r.packages?.[0]?.clinicId as string | undefined;
+        if (!clinicId) {
+          this.notes.push(`getClinicPackages returned no packages for ${r.clinicName}.`);
+          break;
         }
-        this.addFact({
-          key: "clinic.packageCount",
-          entity: { clinicId, clinicName },
-          label: `${clinicName} · number of packages`,
-          render: String(r.packages?.length ?? 0),
-          source: src,
-          anchors: [clinicName],
-        });
+        const c = this.clinic(clinicId, r.clinicName, src);
+        for (const flag of r.clinic_flags ?? []) {
+          if (flag.name === "Speciality") c.specialty = flag.value;
+          if (flag.name === "Practice type") c.practiceType = flag.value;
+        }
         for (const p of r.packages ?? []) {
-          const e = { clinicId: p.clinicId, clinicName, packageId: p.id, packageName: p.name };
-          const anchors = [p.name];
-          this.addFact({ key: "package.name", entity: e, label: `${clinicName} · package name`, render: p.name, source: src, anchors: [clinicName] });
-          this.addFact({
-            key: "package.basePrice",
-            entity: e,
-            label: `${clinicName} · ${p.name} · price`,
-            render: money(p.basePrice, true, p.currency),
-            money: p.basePrice,
+          if (this.byId.has(p.id)) continue;
+          const ref = `P${[...this.entities.values()].filter((e) => e.kind === "package").length + 1}`;
+          const pkg: PackageEntity = {
+            id: p.id,
+            kind: "package",
+            ref,
+            name: p.name,
+            clinicId: p.clinicId,
+            clinicName: r.clinicName,
+            price: p.basePrice,
+            deposit: p.depositAmount,
+            currency: p.currency ?? r.currency ?? "USD",
+            included: (p.includedAddons ?? []).map((a: any) => ({ name: a.name, qty: a.includedQuantity, unit: a.unitDescription })),
+            weekdays: p.bookableWeekdays ?? [],
+            note: p.aiContext ?? null,
             source: src,
-            anchors,
-          });
-          this.addFact({
-            key: "package.depositAmount",
-            entity: e,
-            label: `${clinicName} · ${p.name} · deposit`,
-            render: money(p.depositAmount, false, p.currency),
-            money: p.depositAmount,
-            source: src,
-            anchors,
-          });
-          this.addFact({
-            key: "package.bookableWeekdays",
-            entity: e,
-            label: `${clinicName} · ${p.name} · bookable weekdays`,
-            render: (p.bookableWeekdays ?? []).join(", "),
-            source: src,
-            anchors,
-          });
-          for (const a of p.includedAddons ?? []) {
-            this.addFact({
-              key: "package.includedAddon",
-              entity: e,
-              label: `${clinicName} · ${p.name} · included`,
-              render: `${a.includedQuantity} ${a.name.toLowerCase()} ${a.unitDescription}${a.includedQuantity === 1 ? "" : "s"} included`,
-              source: src,
-              anchors,
-            });
-          }
-          if (p.aiContext) {
-            this.addFact({
-              key: "package.aiContext",
-              entity: e,
-              label: `${clinicName} · ${p.name} · package-specific note (paraphrase, applies to this package only)`,
-              render: p.aiContext,
-              source: src,
-              anchors,
-            });
-          }
+          };
+          this.entities.set(ref, pkg);
+          this.byId.set(p.id, ref);
+          c.packageRefs.push(ref);
         }
         break;
       }
       case "getAllClinics":
       case "getSavedClinics": {
-        const list = rec.tool === "getAllClinics" ? r.clinics : r.savedClinics.map((s: any) => ({ ...s.clinic, ranking: s.ranking }));
-        for (const c of list ?? []) {
-          const e = { clinicId: c.id, clinicName: c.name };
-          this.addFact({ key: "clinic.location", entity: e, label: `${c.name} · location`, render: `${c.address?.city}, ${c.address?.country === "TR" ? "Turkey" : c.address?.country}`, source: src, anchors: [c.name] });
-          for (const flag of c.clinic_flags ?? []) {
-            this.addFact({ key: `clinic.flag.${flag.name}`, entity: e, label: `${c.name} · ${flag.name}`, render: String(flag.value), source: src, anchors: [c.name] });
+        const items = rec.tool === "getAllClinics" ? r.clinics : r.savedClinics.map((s: any) => ({ ...s.clinic, ranking: s.ranking }));
+        for (const x of items ?? []) {
+          const c = this.clinic(x.id, x.name, src);
+          const country = x.address?.country === "TR" ? "Turkey" : x.address?.country;
+          if (x.address?.city) c.location = `${x.address.city}, ${country}`;
+          for (const flag of x.clinic_flags ?? []) {
+            if (flag.name === "Speciality") c.specialty = flag.value;
+            if (flag.name === "Practice type") c.practiceType = flag.value;
           }
-          if (c.ai_context?.patientFacingSummary) {
-            this.addFact({ key: "clinic.summary", entity: e, label: `${c.name} · summary`, render: c.ai_context.patientFacingSummary, source: src, anchors: [c.name] });
-          }
-          if (c.ai_context?.bestFor?.length) {
-            this.addFact({ key: "clinic.bestFor", entity: e, label: `${c.name} · best for`, render: c.ai_context.bestFor.join("; "), source: src, anchors: [c.name] });
-          }
-          if (c.ranking) {
-            this.addFact({ key: "clinic.ranking", entity: e, label: `${c.name} · assessment recommendation rank`, render: String(c.ranking), source: src, anchors: [c.name] });
-          }
-          if (c.slug) this.addLink(`https://www.doctours.com/clinic/${c.slug}`, `Doctours clinic page for ${c.name}`, src);
+          if (x.ai_context?.bestFor?.length) c.bestFor = x.ai_context.bestFor;
+          if (x.ranking) c.ranking = x.ranking;
+          if (x.slug) this.addLink(`https://www.doctours.com/clinic/${x.slug}`, `Doctours clinic page for ${x.name}`, src);
         }
         break;
       }
       case "getClinicDoctors": {
-        for (const d of r.doctors ?? []) {
-          this.addFact({
-            key: "clinic.doctor",
-            entity: { clinicId: r.clinicId, clinicName: r.clinicName },
-            label: `${r.clinicName} · doctor`,
-            render: `${d.name} (${d.title})`,
-            source: src,
-            anchors: [r.clinicName],
-          });
-        }
+        const c = this.clinic(r.clinicId, r.clinicName, src);
+        c.doctors = (r.doctors ?? []).map((d: any) => ({ name: d.name, title: d.title }));
         break;
       }
       case "getLatestAssessment": {
         if (r.assessmentUrl && r.shareStatus !== "not_ready") this.addLink(r.assessmentUrl, "Patient's personal assessment (has a Book button that opens deposit checkout)", src);
-        if (r.graftRange) {
-          this.addFact({ key: "assessment.graftRange", entity: {}, label: "Assessment graft estimate range", render: `${r.graftRange.low.toLocaleString("en-US")} to ${r.graftRange.high.toLocaleString("en-US")} grafts`, source: src, anchors: [] });
-        }
-        this.addFact({ key: "assessment.shareStatus", entity: {}, label: "Assessment status", render: String(r.shareStatus), source: src, anchors: [] });
+        this.entities.set("AS", { kind: "assessment", ref: "AS", graftLow: r.graftRange?.low, graftHigh: r.graftRange?.high, shareStatus: r.shareStatus, source: src });
         break;
       }
       case "getPaymentLink": {
         if (r.status === "ready" && r.url) {
           const what = r.linkType === "payment" ? `deposit payment link for ${r.clinicName} · ${r.clinicPackageName}` : `deposit checkout link for ${r.clinicName}`;
           this.addLink(r.url, what, src);
-        } else {
-          this.notes.push(`getPaymentLink did not return a link (${r.reason ?? r.status}). Do not write a payment URL.`);
-        }
+        } else this.notes.push(`getPaymentLink did not return a link (${r.reason ?? r.status}). Do not write a payment URL.`);
         break;
       }
       case "getPatientImages": {
-        for (const [angle, v] of Object.entries<any>(r.angles ?? {})) {
-          for (const url of v.urls ?? []) this.addAttachment(url, `${angle} photo`, src);
-        }
-        this.addFact({ key: "images.uploadedAngles", entity: {}, label: "Uploaded photo angles", render: (r.uploadedAngles ?? []).join(", ") || "none", source: src, anchors: [] });
+        for (const [angle, v] of Object.entries<any>(r.angles ?? {})) for (const url of v.urls ?? []) this.addAttachment(url, `${angle} photo`, src);
+        this.context.push({ key: "images.uploadedAngles", text: `Uploaded photo angles: ${(r.uploadedAngles ?? []).join(", ") || "none"}`, source: src });
         break;
       }
       case "getPatientContext": {
         const s = r.clinicSelectionPreferences ?? {};
-        this.addFact({ key: "patient.selectedClinicId", entity: {}, label: "Saved selected clinic id", render: String(s.selectedClinicId ?? "none"), source: src, anchors: [] });
-        this.addFact({ key: "patient.selectedPackageId", entity: {}, label: "Saved selected package id", render: String(s.selectedPackageId ?? "none"), source: src, anchors: [] });
-        if (r.tentativeProcedureDates?.text) {
-          this.addFact({ key: "patient.tentativeDates", entity: {}, label: "Tentative procedure timing", render: r.tentativeProcedureDates.text, source: src, anchors: [] });
-        }
+        const sel = s.selectedClinicId ? (this.entities.get(this.byId.get(s.selectedClinicId) ?? "") as ClinicEntity | undefined)?.name ?? "a saved clinic" : "none";
+        this.context.push({ key: "patient.selection", text: `Saved clinic selection: ${sel}; saved package selection: ${s.selectedPackageId ? "yes" : "none"}`, source: src });
+        if (r.tentativeProcedureDates?.text) this.context.push({ key: "patient.tentativeDates", text: `Patient's tentative timing: ${r.tentativeProcedureDates.text}`, source: src });
         break;
       }
       case "getConsultationRescheduleLink": {
-        this.addFact({ key: "consultation.status", entity: {}, label: "Consultation on file", render: r.status === "no_consultation" ? "none scheduled" : String(r.status), source: src, anchors: [] });
+        this.context.push({ key: "consultation.status", text: `Consultation on file: ${r.status === "no_consultation" ? "none scheduled" : r.status}`, source: src });
         if (r.url) this.addLink(r.url, "Consultation reschedule link", src);
         break;
       }
       case "getFullCalls": {
-        for (const c of r.calls ?? []) {
-          this.addFact({ key: "call.summary", entity: {}, label: `Call on ${String(c.createdAt).slice(0, 10)} (context only, never a source of price or policy)`, render: c.summary, source: src, anchors: [] });
-        }
+        for (const c of r.calls ?? []) this.context.push({ key: "call.summary", text: `Call on ${String(c.createdAt).slice(0, 10)} (context only, never a source of price or policy): ${c.summary}`, source: src });
         break;
       }
       default:
@@ -228,9 +261,38 @@ export class Ledger {
     }
   }
 
+  /** Render one clause token; null if the entity or clause does not exist or has no data. */
+  renderClause(ref: string, kind: string): string | null {
+    const e = this.entities.get(ref);
+    if (!e) return null;
+    if (e.kind === "package") return PACKAGE_CLAUSES[kind]?.(e) ?? null;
+    if (e.kind === "clinic") return CLINIC_CLAUSES[kind]?.(e, this) ?? null;
+    return ASSESSMENT_CLAUSES[kind]?.(e) ?? null;
+  }
+
+  /** All clause tokens that render, with previews (what the writer sees). */
+  availableClauses(): { token: string; ref: string; kind: string; preview: string }[] {
+    const out: { token: string; ref: string; kind: string; preview: string }[] = [];
+    for (const e of this.entities.values()) {
+      const kinds = Object.keys(e.kind === "package" ? PACKAGE_CLAUSES : e.kind === "clinic" ? CLINIC_CLAUSES : ASSESSMENT_CLAUSES);
+      for (const kind of kinds) {
+        const preview = this.renderClause(e.ref, kind);
+        if (preview) out.push({ token: `{{${e.ref}:${kind}}}`, ref: e.ref, kind, preview });
+      }
+    }
+    return out;
+  }
+
   factsBlock(): string {
-    if (!this.facts.length) return "(no facts fetched this turn)";
-    return this.facts.map((f) => `${f.id}: ${f.label} = ${f.render}`).join("\n");
+    const lines: string[] = [];
+    for (const e of this.entities.values()) {
+      const header =
+        e.kind === "package" ? `${e.ref} = package "${e.name}" at ${e.clinicName}` : e.kind === "clinic" ? `${e.ref} = clinic "${e.name}"` : `AS = the patient's assessment`;
+      lines.push(header);
+      for (const c of this.availableClauses().filter((x) => x.ref === e.ref)) lines.push(`  ${c.token} → "${c.preview}"`);
+    }
+    for (const c of this.context) lines.push(`(context) ${c.text}`);
+    return lines.length ? lines.join("\n") : "(no facts fetched this turn)";
   }
 
   linksBlock(): string {
@@ -241,13 +303,14 @@ export class Ledger {
     return this.attachments.length ? this.attachments.map((a) => `${a.id}: ${a.label}`).join("\n") : "(none)";
   }
 
-  fact(id: string) {
-    return this.facts.find((f) => f.id === id);
-  }
   link(id: string) {
     return this.links.find((l) => l.id === id);
   }
   attachment(id: string) {
     return this.attachments.find((a) => a.id === id);
+  }
+  /** Number of renderable facts (for traces). */
+  get factCount() {
+    return this.availableClauses().length;
   }
 }
