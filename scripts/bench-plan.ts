@@ -28,15 +28,15 @@ interface Step {
 }
 const common = ["--failover", "0", "--publish", "--concurrency", "2"];
 const PLAN: Step[] = [
-  { name: "deepseek · holdout-v3 · k3", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "holdout-v3", "--k", "3", ...common], cap: 0.2 },
-  { name: "gemini · holdout-v3 · k3", script: "eval/run.ts", args: ["--writer", "gemini", "--set", "holdout-v3", "--k", "3", ...common], cap: 0.75 },
-  { name: "deepseek · regression-v2 · k3", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "regression-v2", "--k", "3", ...common], cap: 0.2 },
+  { name: "deepseek · holdout-v4 · k3", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "holdout-v4", "--k", "3", ...common], cap: 0.2 },
+  { name: "gemini · holdout-v4 · k3", script: "eval/run.ts", args: ["--writer", "gemini", "--set", "holdout-v4", "--k", "3", ...common], cap: 0.75 },
   { name: "deepseek · packet+dev · k3", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "all", "--k", "3", ...common], cap: 0.2 },
-  { name: "deepseek · holdout-v3 · jev-only · k1", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "holdout-v3", "--k", "1", "--router", "jev-only", ...common], cap: 0.06 },
-  { name: "deepseek · holdout-v3 · llm-only · k1", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "holdout-v3", "--k", "1", "--router", "llm-only", ...common], cap: 0.1 },
-  { name: "monolith baseline · deepseek · holdout-v3", script: "eval/baseline.ts", args: ["--writer", "deepseek", "--set", "holdout-v3", "--concurrency", "2", "--publish"], cap: 0.2 },
+  { name: "deepseek · regression-v3 · k3", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "regression-v3", "--k", "3", ...common], cap: 0.2 },
+  { name: "deepseek · holdout-v4 · jev-only · k1", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "holdout-v4", "--k", "1", "--router", "jev-only", ...common], cap: 0.06 },
+  { name: "deepseek · holdout-v4 · llm-only · k1", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "holdout-v4", "--k", "1", "--router", "llm-only", ...common], cap: 0.1 },
+  { name: "monolith baseline · deepseek · holdout-v4", script: "eval/baseline.ts", args: ["--writer", "deepseek", "--set", "holdout-v4", "--concurrency", "2", "--publish"], cap: 0.2 },
+  { name: "deepseek · regression-v2 · k1", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "regression-v2", "--k", "1", ...common], cap: 0.08 },
   { name: "deepseek · regression-v1 · k1", script: "eval/run.ts", args: ["--writer", "deepseek", "--set", "regression-v1", "--k", "1", ...common], cap: 0.08 },
-  { name: "gemini · regression-v2 · k1", script: "eval/run.ts", args: ["--writer", "gemini", "--set", "regression-v2", "--k", "1", ...common], cap: 0.25 },
 ];
 
 mkdirSync("eval/results", { recursive: true });
