@@ -9,4 +9,3 @@ out*.json
 *.log
 .DS_Store
 .claude/settings.local.json
-dashboard.html

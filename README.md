@@ -295,6 +295,7 @@ Each reply is one trace: guards, router answers and merge decisions, gate rule, 
 
 - **Phoenix (optional, one command).** `docker compose up -d phoenix`, then set `PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006` in `.env`. Replies are exported as OpenInference spans (CHAIN, GUARDRAIL, TOOL, LLM, EVALUATOR) and viewed at http://localhost:6006. Export is off by default, failure-silent, and never changes a reply.
 - **Offline dashboard (no setup).** `npm run dashboard` writes one HTML file from `traces/`, `examples/` and `eval/results`, with a run overview, a per-message trace view, and a pass/fail grid per eval case.
+- **Pre-built copy:** [`dashboard.html`](dashboard.html) in the repo root is a snapshot of every run behind this README (609 traces, 8 eval runs), so you can download it and open it in a browser without running anything. Card numbers are redacted and emails and phone numbers are masked before traces are saved.
 
 <img src="docs/img/dashboard.png" alt="Offline dashboard overview: headline numbers for the latest eval run and a comparison of every run, including the original-prompt baselines" width="100%">
 
