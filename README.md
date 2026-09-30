@@ -24,6 +24,29 @@ npm run reply -- --input messages.json --output replies.json
 
 ---
 
+## What the packet asked for
+
+| Packet requirement | Status | How this repo handles it |
+|---|---|---|
+| A runnable GitHub repository | ✅ Done | Prerequisites, keys with sign-up links, install and run commands (see [What you need](#what-you-need) and [Setup](#setup)); CI runs the typecheck and tests on every push |
+| JSON array of `{id, text}` in, replies out in the same order | ✅ Done | The CLI validates input with zod and writes each reply at its input's index, even though messages run concurrently |
+| The exact `Reply` interface | ✅ Done | zod checks every field, including nulls, `escalationReason` present if and only if `escalate`, and consistent follow-up fields |
+| A person asked for → escalate | ✅ Done | Clear requests take a code fast path (no model call); indirect ones are caught by the typed router, and uncertain signals get a second opinion |
+| An action no tool can do → escalate | ✅ Done | Typed categories: charge a card, move paid money, contact the clinic, hold a date, change a booking, an off-channel call, honor a claimed discount |
+| Escalation is one short sentence, then stop | ✅ Done | Code renders a fixed sentence per category and returns. No writer call and no writes happen after a handoff |
+| Only the supplied tools | ✅ Done | The registry holds exactly the packet's 14 functions, validates arguments, rejects unknown tools, and keeps write tools out of the model's reach |
+| Plain text, URLs on trailing lines, at most 3 tool-backed attachments | ✅ Done | Code renders links as the last lines; the checks reject typed URLs, strip markdown, and cap attachments at 3 from this turn's tools |
+| Replace the huge prompt with a better structure | ✅ Done | Core rules plus only the skills a message needs, facts rendered by code, a policy gate, checks, one repair, and a safe fallback |
+| Explain the architecture and what stays loaded | ✅ Done | This README, plus [`SOURCE_MAP.md`](domains/hair/SOURCE_MAP.md), which maps every section of the old prompt to its new rule or says why it was dropped |
+
+**Partly addressed (the packet's broader goals):**
+
+| Goal | Status | Where it stands |
+|---|---|---|
+| Add another care area (for example fertility) without touching hair | 🟡 Partly | Rules, skills and policy facts live in `domains/hair/`, and the loader takes a domain directory. But the patient context, tool fixtures, router questions and some prefetch logic are still hair-specific, so a new domain needs code as well as Markdown. |
+| Hand focused subtasks to a subagent (for example reading call logs) | 🟡 Partly | Responsibilities are separated (router, evidence, writer, checks), and call logs are fetched by code (`getFullCalls`) and shown to the writer as context only, never as a source of prices or policy. There is no separate call-log subagent; the packet allows skills, agents or any other structure. |
+| A policy change doesn't affect unrelated replies | 🟡 Partly | Skills load only when needed and policy figures are bound to one rule each, which limits the blast radius. But `core.md` and the claim checks are shared by every reply, so changing them can affect all skills. The checks are measured on every run (see Results). |
+
 ## Before and after
 
 **Before:** one prompt does everything.
