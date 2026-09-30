@@ -2,10 +2,10 @@ import { ReplySchema, WorkingMemoryUpdatesSchema, type InputItem, type Reply, ty
 import { renderUserMessage, type PatientContext } from "./context.js";
 import { guardInput, HARD_INPUT_LIMIT } from "./guards/input.js";
 import { buildQuestions, routerState, type QuestionSet } from "./decision/questions.js";
-import { mergeChunks, type Router, type RouterResult } from "./decision/router.js";
+import { mergeChunks, RouterFailure, type Router, type RouterResult } from "./decision/router.js";
 import { choiceP } from "./decision/adapter.js";
 import { gate, HANDOFF, THRESHOLDS, type EscalationCategory } from "./policy/gate.js";
-import { selectSkills, applyConditions, type Domain, type Selection } from "./skills/loader.js";
+import { selectSkills, applyConditions, factsFor, type Domain, type Selection } from "./skills/loader.js";
 import { flags } from "./context.js";
 import { Ledger } from "./evidence/ledger.js";
 import { prefetch } from "./evidence/prefetch.js";
@@ -15,7 +15,8 @@ import { buildWriterSystem } from "./writer/prompt.js";
 import { runWriter, type WriterResult } from "./writer/writer.js";
 import { buildFallback } from "./writer/fallback.js";
 import { hard, render, validate, type Rendered, type WriterOutput } from "./validation/validate.js";
-import { commitWrites } from "./commit.js";
+import { commitWrites, planSelection } from "./commit.js";
+import { claimsPersistence } from "./validation/claims.js";
 import { type LlmClient } from "./llm/client.js";
 import { fromJevUsage, fromLlmUsage, fromRouterUsage, totals, type StageUsage, type UsageTotals } from "./usage.js";
 import type { SystemOneAdapter } from "./decision/systemone.js";
@@ -49,6 +50,8 @@ export interface Trace {
     actionConsensus: RouterResult["actionConsensus"];
     chunks: number;
     errors: string[];
+    unconfirmed?: string[];
+    retries?: number;
     latencyMs: number;
     signals: Record<string, unknown>;
   };
@@ -64,10 +67,15 @@ export interface Trace {
   usage: UsageTotals;
   /** Every model/classifier call by stage; unknown costs are null, estimates are flagged. */
   usageByStage: StageUsage[];
+  /** Set when every router adapter failed (the turn then hands off). */
+  routerFailure?: { errors: string[]; retries: number };
   latencyMs: number;
   reply: Reply;
   error?: string;
 }
+
+/** pause.interval: a pausing patient gets a 1-month check-in unless they named another window. */
+const PAUSE_FOLLOW_UP = { threshold: 0.7, timing: "1 month" };
 
 export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(deps.domain, deps.ctx)): Promise<{ reply: Reply; trace: Trace }> {
   const started = Date.now();
@@ -148,10 +156,19 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
     // 2. Typed interpretation over the FULL message. Long messages are routed chunk by
     //    chunk and merged (terminal signals by max) before anything is drafted.
     const chunks = chunkText(g.redacted, ROUTER_CHUNK_CHARS);
-    const rr: RouterResult = await mark("router", async () =>
-      mergeChunks(await Promise.all(chunks.map((c) => deps.router.decide({ text: c, state: routerState(ctx, c), qs })))),
-    );
-    trace.usageByStage.push(...rr.usages.map((u) => fromRouterUsage(u.stage, u.usage)));
+    // allSettled: a failed chunk must not discard the usage of the chunks (and calls) that ran.
+    const settled = await mark("router", () => Promise.allSettled(chunks.map((c) => deps.router.decide({ text: c, state: routerState(ctx, c), qs }))));
+    for (const s of settled) {
+      const usages = s.status === "fulfilled" ? s.value.usages : s.reason instanceof RouterFailure ? s.reason.usages : [{ stage: "router:failed-call", usage: undefined }];
+      trace.usageByStage.push(...usages.map((u) => fromRouterUsage(u.stage, u.usage)));
+    }
+    const failed = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+    if (failed) {
+      const f = failed.reason as { errors?: string[]; retries?: number; message?: string };
+      trace.routerFailure = { errors: f.errors ?? [String(f.message ?? f)], retries: f.retries ?? 0 };
+      throw failed.reason;
+    }
+    const rr: RouterResult = mergeChunks(settled.map((s) => (s as PromiseFulfilledResult<RouterResult>).value));
     const d = rr.decision;
     if (g.injectionHeuristic) d.promptInjection = Math.max(d.promptInjection, 0.9);
     trace.router = {
@@ -162,12 +179,14 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
       actionConsensus: rr.actionConsensus,
       chunks: chunks.length,
       errors: rr.errors,
+      unconfirmed: rr.unconfirmed,
+      retries: rr.retries,
       latencyMs: d.latencyMs,
       signals: summarise(d),
     };
 
     // 3. Policy gate (code holds authority).
-    const gr = await mark("gate", () => gate(d, g, ctx.clinics.map((c) => c.name), rr.actionConsensus));
+    const gr = await mark("gate", () => gate(d, g, ctx.clinics.map((c) => c.name), rr.actionConsensus, rr.unconfirmed));
     trace.rulesFired.push(...gr.rulesFired);
     if (gr.route === "handoff") {
       return handoff(gr.category!, d.promptInjection >= THRESHOLDS.act ? "prompt-injection attempt" : undefined);
@@ -191,6 +210,7 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
 
     // 5. Evidence, code first.
     const ledger = new Ledger();
+    ledger.addPolicyFacts(factsFor(domain, sel.ids));
     await mark("evidence", () => prefetch(sel.ids, d, ctx, g.text, exec, ledger));
     for (const id of sel.ids) {
       for (const url of domain.skills.get(id)!.links) ledger.addLink(url, `${domain.skills.get(id)!.title} page`, `skill:${id}`);
@@ -223,6 +243,8 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
         linksAlreadySent: ctx.linksAlreadySent,
         paymentSkillLoaded: sel.ids.includes("payment"),
         linkRequested: d.paymentMode.choice === "link_request",
+        selectionWritePlanned: Object.keys(planSelection(d, ctx.clinics.map((x) => x.id)).selection).length > 0,
+        codeFollowUp: d.pausing >= PAUSE_FOLLOW_UP.threshold ? PAUSE_FOLLOW_UP.timing : null,
       },
     };
     let writerUsed = deps.writer;
@@ -240,7 +262,15 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
         if (!deps.writerFallback) throw e;
         failover = `${deps.writer.profile.key} failed (${(e as Error).message.slice(0, 120)}); used ${deps.writerFallback.profile.key}`;
         writerUsed = deps.writerFallback;
-        return await runWriter({ client: deps.writerFallback, ...writerArgs });
+        try {
+          return await runWriter({ client: deps.writerFallback, ...writerArgs });
+        } catch (e2) {
+          for (const a of ((e2 as any).partialAttempts ?? []) as { phase: string; usage: unknown }[]) {
+            trace.usageByStage.push(fromLlmUsage(`writer:${deps.writerFallback.profile.key}:${a.phase}`, a.usage));
+          }
+          trace.usageByStage.push({ stage: `writer:${deps.writerFallback.profile.key}:failed-call`, inputTokens: null, outputTokens: null, costUsd: null });
+          throw e2;
+        }
       }
     });
     for (const a of w.attempts) trace.usageByStage.push(fromLlmUsage(`writer:${writerUsed.profile.key}:${a.phase}`, a.usage));
@@ -302,13 +332,18 @@ export async function respond(item: InputItem, deps: Deps, qs = buildQuestions(d
     const c = await mark("commit", () => commitWrites(d, memory, exec, ctx.clinics.map((x) => x.id)));
     trace.commits = c.receipts.map((r) => ({ tool: r.tool, ok: r.ok, args: r.args }));
     trace.commitSkipped = c.skipped;
+    // A reply that says something was noted or saved is sent only with a successful write receipt.
+    if (claimsPersistence(final.out.reply) && !c.receipts.some((r) => r.ok && r.result !== null)) {
+      trace.rulesFired.push("commit.persistence-claim-without-receipt");
+      return handoff("internal_error", "reply claimed a save that no write confirmed");
+    }
 
     // 10. Finalize.
     let shouldFollowUp = final.source === "writer" && final.out.should_follow_up === true && !!final.out.follow_up_timing;
     let followUpTiming = shouldFollowUp ? final.out.follow_up_timing : null;
-    if (d.pausing >= 0.7 && !shouldFollowUp) {
+    if (d.pausing >= PAUSE_FOLLOW_UP.threshold && !shouldFollowUp) {
       shouldFollowUp = true;
-      followUpTiming = "1 month";
+      followUpTiming = PAUSE_FOLLOW_UP.timing;
       trace.rulesFired.push("finalize.pause-default-1-month");
     }
     trace.route = "answer";
