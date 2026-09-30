@@ -3,8 +3,12 @@
     "target": "ES2023",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "lib": ["ES2023"],
-    "types": ["node"],
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -13,5 +17,10 @@
     "verbatimModuleSyntax": false,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src", "tests", "eval"]
+  "include": [
+    "src",
+    "tests",
+    "eval",
+    "scripts"
+  ]
 }
