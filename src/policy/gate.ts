@@ -63,12 +63,23 @@ const MONEY_ACTIONS: UnsupportedAction[] = ["move_paid_money", "charge_card"];
  *   ("disagree" never escalates on its own; nothing can be executed or promised anyway,
  *   because tools are read-only and validators block off-channel promises).
  */
-export function gate(d: Decision, g: GuardResult, clinicNames: string[], actionConsensus: "single" | "agree" | "disagree" | "confirmation_unavailable" = "single"): GateResult {
+export function gate(
+  d: Decision,
+  g: GuardResult,
+  clinicNames: string[],
+  actionConsensus: "single" | "agree" | "disagree" | "confirmation_unavailable" = "single",
+  /** Uncertain escalation signals whose second opinion failed: escalated conservatively. */
+  unconfirmed: string[] = [],
+): GateResult {
   const fired: string[] = [];
   const t = THRESHOLDS;
 
   if (d.medicalUrgent >= t.act || d.selfHarm >= t.act) {
     fired.push("gate.safety-first");
+    return { route: "handoff", category: "medical", rulesFired: fired };
+  }
+  if (unconfirmed.includes("medicalUrgent") || unconfirmed.includes("selfHarm")) {
+    fired.push("gate.safety-unconfirmed");
     return { route: "handoff", category: "medical", rulesFired: fired };
   }
   if (g.humanFastPath) {
@@ -77,6 +88,10 @@ export function gate(d: Decision, g: GuardResult, clinicNames: string[], actionC
   }
   if (d.needsHuman >= t.act) {
     fired.push("gate.human-request");
+    return { route: "handoff", category: "human", rulesFired: fired };
+  }
+  if (unconfirmed.includes("needsHuman")) {
+    fired.push("gate.human-unconfirmed");
     return { route: "handoff", category: "human", rulesFired: fired };
   }
 
@@ -97,7 +112,7 @@ export function gate(d: Decision, g: GuardResult, clinicNames: string[], actionC
     fired.push("gate.card-data-with-execution");
     return { route: "handoff", category: "charge_card", rulesFired: fired };
   }
-  if (d.abuseOrLegal >= t.act) {
+  if (d.abuseOrLegal >= t.act || unconfirmed.includes("abuseOrLegal")) {
     fired.push("gate.abuse-or-legal");
     return { route: "handoff", category: "abuse", rulesFired: fired };
   }

@@ -20,15 +20,32 @@ export interface RouterResult {
   second?: Decision;
   usages: { stage: string; usage: unknown }[];
   errors: string[];
+  /** Terminal signals in the uncertain band whose second opinion was unavailable (the gate escalates). */
+  unconfirmed: Terminal[];
+  /** Extra adapter attempts beyond the first (classifier retry on malformed output, transport retries). */
+  retries: number;
 }
 
+/** Every adapter failed. Carries the usage of each attempted call so cost is never silently lost. */
+export class RouterFailure extends Error {
+  constructor(message: string, readonly usages: RouterResult["usages"], readonly errors: string[]) {
+    super(message);
+    this.name = "RouterFailure";
+  }
+}
+
+/** A failed call's usage: known if the adapter returned it with the error (billed but malformed), else unknown. */
+const failedUsage = (e: unknown) => (e as { usage?: unknown })?.usage;
+/** Extra attempts an adapter made, from a decision's raw metadata or a thrown error. */
+const extraAttempts = (x: unknown) => Math.max(0, Number((x as { attempts?: number })?.attempts ?? 1) - 1);
+
 const pOf = (c: ChoiceAnswer) => c.probabilities[c.choice] ?? 0;
+const inBand = (p: number) => p >= THRESHOLDS.uncertainLow && p < THRESHOLDS.act;
 
 /** Signals whose value deserves a second opinion. */
 export function secondOpinionReasons(d: Decision): string[] {
-  const band = (p: number) => p >= THRESHOLDS.uncertainLow && p < THRESHOLDS.act;
   const out: string[] = [];
-  for (const k of TERMINAL_SIGNALS) if (band(d[k])) out.push(`uncertain:${k}`);
+  for (const k of TERMINAL_SIGNALS) if (inBand(d[k])) out.push(`uncertain:${k}`);
   const a = d.unsupportedAction;
   if (a.choice !== "none" && pOf(a) >= THRESHOLDS.uncertainLow) out.push(pOf(a) >= THRESHOLDS.act ? "confirm:unsupportedAction" : "uncertain:unsupportedAction");
   return out;
@@ -53,17 +70,36 @@ export class Router {
   }
 
   async decide(input: DecisionInput): Promise<RouterResult> {
+    let retries = 0;
+    const r = await this.decideInner(input, (n) => (retries += n)).catch((e) => {
+      if (e instanceof RouterFailure) (e as RouterFailure & { retries?: number }).retries = retries;
+      throw e;
+    });
+    return { ...r, retries };
+  }
+
+  private async decideInner(input: DecisionInput, countRetries: (n: number) => void): Promise<Omit<RouterResult, "retries">> {
     const errors: string[] = [];
     const usages: RouterResult["usages"] = [];
     let decision: Decision;
     try {
       decision = await this.primary.decide(input);
+      countRetries(extraAttempts(decision.raw));
       usages.push({ stage: `router:${this.primary.name}`, usage: (decision.raw as any)?.usage });
     } catch (e) {
+      countRetries(extraAttempts(e));
       errors.push(`${this.primary.name}: ${(e as Error).message}`);
-      usages.push({ stage: `router:${this.primary.name}:failed-call`, usage: undefined });
-      if (!this.secondary) throw e;
-      decision = await this.secondary.decide(input);
+      usages.push({ stage: `router:${this.primary.name}:failed-call`, usage: failedUsage(e) });
+      if (!this.secondary) throw new RouterFailure(errors.join(" | "), usages, errors);
+      try {
+        decision = await this.secondary.decide(input);
+        countRetries(extraAttempts(decision.raw));
+      } catch (e2) {
+        countRetries(extraAttempts(e2));
+        errors.push(`${this.secondary.name}: ${(e2 as Error).message}`);
+        usages.push({ stage: `router:${this.secondary.name}:failed-call`, usage: failedUsage(e2) });
+        throw new RouterFailure(errors.join(" | "), usages, errors);
+      }
       usages.push({ stage: `router:${this.secondary.name}`, usage: (decision.raw as any)?.usage });
       return base(decision, this.primary.name, true, errors, usages, "single");
     }
@@ -76,11 +112,15 @@ export class Router {
     let second: Decision;
     try {
       second = await this.secondary.decide(input);
+      countRetries(extraAttempts(second.raw));
       usages.push({ stage: `router:${this.secondary.name}`, usage: (second.raw as any)?.usage });
     } catch (e) {
+      countRetries(extraAttempts(e));
       errors.push(`${this.secondary.name}: ${(e as Error).message}`);
-      usages.push({ stage: `router:${this.secondary.name}:failed-call`, usage: undefined });
-      return base(decision, this.primary.name, false, errors, usages, actionFlagged ? "confirmation_unavailable" : "single", reasons);
+      usages.push({ stage: `router:${this.secondary.name}:failed-call`, usage: failedUsage(e) });
+      // An uncertain escalation signal that could not be confirmed is treated conservatively.
+      const unconfirmed = TERMINAL_SIGNALS.filter((k) => inBand(decision[k]));
+      return base(decision, this.primary.name, false, errors, usages, actionFlagged ? "confirmation_unavailable" : "single", reasons, unconfirmed);
     }
     const out: Decision = { ...decision };
     const merged: RouterResult["merged"] = {};
@@ -100,7 +140,7 @@ export class Router {
         };
       }
     }
-    return { decision: out, primary: this.primary.name, fallbackUsed: false, secondOpinion: reasons, merged, actionConsensus, second, usages, errors };
+    return { decision: out, primary: this.primary.name, fallbackUsed: false, secondOpinion: reasons, merged, actionConsensus, second, usages, errors, unconfirmed: [] };
   }
 }
 
@@ -112,8 +152,9 @@ function base(
   usages: RouterResult["usages"],
   actionConsensus: ActionConsensus,
   secondOpinion: string[] = [],
-): RouterResult {
-  return { decision, primary, fallbackUsed, secondOpinion, merged: {}, actionConsensus, usages, errors };
+  unconfirmed: Terminal[] = [],
+): Omit<RouterResult, "retries"> {
+  return { decision, primary, fallbackUsed, secondOpinion, merged: {}, actionConsensus, usages, errors, unconfirmed };
 }
 
 /** Merge per-chunk decisions for long messages: terminal signals and skills by max, choices by highest-confidence non-default. */
@@ -142,5 +183,7 @@ export function mergeChunks(results: RouterResult[]): RouterResult {
     actionConsensus: flagged?.actionConsensus ?? "single",
     usages: results.flatMap((r) => r.usages),
     errors: results.flatMap((r) => r.errors),
+    unconfirmed: [...new Set(results.flatMap((r) => r.unconfirmed))],
+    retries: results.reduce((a, r) => a + r.retries, 0),
   };
 }

@@ -1,6 +1,6 @@
 import type { Decision } from "../contracts.js";
-import { extractJson, type LlmClient } from "../llm/client.js";
-import { toDecision, type DecisionAdapter, type DecisionInput, type RawAnswers } from "./adapter.js";
+import { addUsage, extractJson, type LlmClient, type Usage } from "../llm/client.js";
+import { AdapterError, checkAnswers, toDecision, type DecisionAdapter, type DecisionInput, type RawAnswers } from "./adapter.js";
 
 /**
  * The same typed questions answered by a language model with JSON output.
@@ -31,27 +31,38 @@ export class LlmDecisionAdapter implements DecisionAdapter {
       "Questions:",
       ...lines,
     ].join("\n");
-    const res = await this.client.chat({
-      system,
-      messages: [{ role: "user", content: `STATE (json):\n${JSON.stringify(state, null, 2)}` }],
-      json: { name: "decision", schema: decisionSchema(qs.questions) },
-      reasoning: "off",
-      maxTokens: 2000,
-      timeoutMs: 45_000,
-    });
-    const parsed = extractJson(res.text)?.answers ?? {};
-    const answers: RawAnswers = {};
-    for (const [k, q] of Object.entries(qs.questions)) {
-      const a = parsed[k] ?? {};
-      if (q.type === "noul") answers[k] = { p: Number(a.p ?? a.probability ?? 0) };
-      else {
-        const ch = String(a.choice ?? "");
-        const valid = ch in q.criteria ? ch : q.type === "choice" && "none" in q.criteria ? "none" : Object.keys(q.criteria)[0];
-        const conf = Number(a.confidence ?? 0.5);
-        answers[k] = { choice: valid, probabilities: { [valid]: conf } };
+    // One retry on malformed output; both calls' usage is kept (sum), never dropped.
+    let usage: Usage | undefined;
+    let lastProblem = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await this.client.chat({
+        system,
+        messages: [{ role: "user", content: `STATE (json):\n${JSON.stringify(state, null, 2)}` }],
+        json: { name: "decision", schema: decisionSchema(qs.questions) },
+        reasoning: "off",
+        maxTokens: 2000,
+        timeoutMs: 45_000,
+      });
+      usage = usage ? addUsage(usage, res.usage) : res.usage;
+      const parsed = extractJson(res.text)?.answers;
+      if (!parsed || typeof parsed !== "object") {
+        lastProblem = "response was not the answers json";
+        continue;
       }
+      // No coercion or defaults: a missing or malformed answer is an error (the router then
+      // falls back to the other adapter or hands off), never a silent "no".
+      const answers: RawAnswers = {};
+      for (const [k, q] of Object.entries(qs.questions)) {
+        const a = parsed[k];
+        if (!a || typeof a !== "object") continue;
+        if (q.type === "noul") answers[k] = { p: a.p ?? a.probability };
+        else answers[k] = { choice: a.choice, probabilities: { [String(a.choice)]: a.confidence } };
+      }
+      const problems = checkAnswers(answers, qs);
+      if (!problems.length) return toDecision(this.name, answers, qs, Date.now() - started, { usage, attempts: attempt + 1 });
+      lastProblem = `malformed answers (${problems.length}): ${problems.slice(0, 4).join("; ")}`;
     }
-    return toDecision(this.name, answers, qs, Date.now() - started, { usage: res.usage });
+    throw new AdapterError(lastProblem, usage, 2);
   }
 }
 

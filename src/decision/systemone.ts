@@ -1,5 +1,5 @@
 import type { Decision } from "../contracts.js";
-import { toDecision, type DecisionAdapter, type DecisionInput, type RawAnswers } from "./adapter.js";
+import { AdapterError, checkAnswers, toDecision, type DecisionAdapter, type DecisionInput, type RawAnswers } from "./adapter.js";
 
 /**
  * TypeSafe "System One" API client. Works for hosted Jev (api.typesafe.ai) and
@@ -16,12 +16,14 @@ export class SystemOneAdapter implements DecisionAdapter {
 
   async decide({ state, qs }: DecisionInput): Promise<Decision> {
     const started = Date.now();
-    const { answers, model, usage } = await this.ask(state, qs.questions);
-    return toDecision(`${this.name}:${model}`, answers, qs, Date.now() - started, { usage });
+    const { answers, model, usage, attempts } = await this.ask(state, qs.questions);
+    const problems = checkAnswers(answers, qs);
+    if (problems.length) throw new AdapterError(`malformed answers (${problems.length}): ${problems.slice(0, 4).join("; ")}`, usage, attempts);
+    return toDecision(`${this.name}:${model}`, answers, qs, Date.now() - started, { usage, attempts });
   }
 
   /** Raw typed questions against a state (also used for the output battery). */
-  async ask(state: unknown, questions: Record<string, unknown>): Promise<{ answers: RawAnswers; model: string; usage: unknown }> {
+  async ask(state: unknown, questions: Record<string, unknown>): Promise<{ answers: RawAnswers; model: string; usage: unknown; attempts: number }> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -48,12 +50,14 @@ export class SystemOneAdapter implements DecisionAdapter {
           else if (a.type === "boolean") answers[k] = { p: a.probability };
           else answers[k] = { choice: a.choice, probabilities: a.probabilities };
         }
-        return { answers, model: data.model ?? this.model, usage: data.usage };
+        return { answers, model: data.model ?? this.model, usage: data.usage, attempts: attempt + 1 };
       } catch (e) {
         lastErr = e;
         await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
       }
     }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    const err = lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    (err as Error & { attempts?: number }).attempts = 3;
+    throw err;
   }
 }

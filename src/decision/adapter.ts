@@ -51,6 +51,35 @@ export function toDecision(adapter: string, answers: RawAnswers, qs: QuestionSet
   };
 }
 
+/** An adapter call that returned no usable decision. Carries the call's usage when it was billed. */
+export class AdapterError extends Error {
+  constructor(message: string, readonly usage?: unknown, readonly attempts = 1) {
+    super(message);
+    this.name = "AdapterError";
+  }
+}
+
+const isProb = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x) && x >= -1e-6 && x <= 1 + 1e-6;
+
+/**
+ * Runtime check of a complete answer set. Every question must be answered: a missing or
+ * invalid safety field is an error, never a negative answer. Returns the problems found.
+ */
+export function checkAnswers(answers: RawAnswers, qs: QuestionSet): string[] {
+  const problems: string[] = [];
+  for (const [k, q] of Object.entries(qs.questions)) {
+    const a = answers[k];
+    if (!a) problems.push(`${k}: missing`);
+    else if (q.type === "noul") {
+      if (!isProb(a.p)) problems.push(`${k}: probability ${JSON.stringify(a.p)} is not a number in [0, 1]`);
+    } else {
+      if (typeof a.choice !== "string" || !(a.choice in q.criteria)) problems.push(`${k}: choice ${JSON.stringify(a.choice)} is not an option`);
+      else if (!Object.values(a.probabilities ?? {}).every(isProb) || !isProb(a.probabilities?.[a.choice])) problems.push(`${k}: confidence is not a number in [0, 1]`);
+    }
+  }
+  return problems;
+}
+
 export const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 
 /** Probability of the selected choice. */
